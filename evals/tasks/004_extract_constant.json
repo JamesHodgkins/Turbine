@@ -1,0 +1,16 @@
+{
+  "id": "task-004",
+  "description": "Replace magic number 3.14159 with a named constant PI",
+  "category": "single-file-edit",
+  "request": "The file geometry.py repeats the magic number 3.14159 in every function. Extract it into a module-level constant named PI and replace all occurrences with PI.",
+  "snapshot": {
+    "geometry.py": "def circle_area(r):\n    return 3.14159 * r * r\n\ndef circle_perimeter(r):\n    return 2 * 3.14159 * r\n\ndef semicircle_perimeter(r):\n    return (3.14159 + 2) * r\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "geometry.py"},
+    {"type": "content_contains",     "file": "geometry.py", "pattern": "PI\\s*="},
+    {"type": "content_not_contains", "file": "geometry.py", "pattern": "3\\.14159"},
+    {"type": "valid_python",         "file": "geometry.py"}
+  ],
+  "test_commands": []
+}

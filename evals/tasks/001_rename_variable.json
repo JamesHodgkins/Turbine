@@ -1,0 +1,16 @@
+{
+  "id": "task-001",
+  "description": "Rename variable `x` to `count` in counter module",
+  "category": "single-file-edit",
+  "request": "Rename the variable `x` to `count` everywhere in counter.py — in its declaration, the global statements, and all uses.",
+  "snapshot": {
+    "counter.py": "x = 0\n\ndef increment():\n    global x\n    x += 1\n    return x\n\ndef get():\n    return x\n\ndef reset():\n    global x\n    x = 0\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "counter.py"},
+    {"type": "content_contains",     "file": "counter.py", "pattern": "count"},
+    {"type": "content_not_contains", "file": "counter.py", "pattern": "global x"},
+    {"type": "valid_python",         "file": "counter.py"}
+  ],
+  "test_commands": []
+}

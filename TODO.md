@@ -44,11 +44,11 @@
 
 ## Phase 7 — Git Integration *Critical*
 
-- [ ] Check for dirty working tree before any run; warn or abort if uncommitted changes exist.
-- [ ] Create a feature branch (`turbine/run-<timestamp>`) before making disk changes.
-- [ ] Auto-commit written files with a structured message (diagnosis summary + ticket list).
-- [ ] Add `--no-branch` flag to skip branch creation for users who manage git themselves.
-- [ ] Expose `git diff HEAD` as an undo hint in the final report.
+- [x] Check for dirty working tree before any run; warn or abort if uncommitted changes exist.
+- [x] Create a feature branch (`turbine/run-<timestamp>`) before making disk changes.
+- [x] Auto-commit written files with a structured message (diagnosis summary + ticket list).
+- [x] Add `--no-branch` flag to skip branch creation for users who manage git themselves.
+- [x] Expose `git diff HEAD` as an undo hint in the final report.
 
 ## Phase 8 — New File Creation
 

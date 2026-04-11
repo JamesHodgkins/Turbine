@@ -1,0 +1,14 @@
+{
+  "id": "task-002",
+  "description": "Fix sum_to_n to include n in the sum",
+  "category": "single-file-edit",
+  "request": "The function sum_to_n should return the sum of all integers from 1 to n inclusive, but it currently excludes n because it uses range(n). Fix the bug so that sum_to_n(4) returns 10.",
+  "snapshot": {
+    "math_utils.py": "def sum_to_n(n):\n    \"\"\"Return 1 + 2 + ... + n.\"\"\"\n    total = 0\n    for i in range(n):\n        total += i\n    return total\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "math_utils.py"},
+    {"type": "valid_python",     "file": "math_utils.py"}
+  ],
+  "test_commands": []
+}

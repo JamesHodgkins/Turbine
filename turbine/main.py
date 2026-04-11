@@ -15,6 +15,7 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from turbine.commit_engine import CommitEngine
+from turbine.git_integration import GitIntegration, build_commit_message
 from turbine.json_ui import JsonEventUI
 from turbine.logger import TurbineLogger
 from turbine.manager import Manager
@@ -33,6 +34,7 @@ async def run(
     no_ui: bool = False,
     json_events: bool = False,
     verbose: bool = False,
+    no_branch: bool = False,
 ) -> None:
     log = TurbineLogger()
     api_key = os.getenv("MISTRAL_API_KEY")
@@ -45,6 +47,31 @@ async def run(
     tree = mapper.map()
     log.action(f"Tree mapped — {len(tree.files)} files found.")
     log.debug(tree.summary())
+
+    # Phase 7: Git preflight — warn about dirty working tree, then branch
+    git = GitIntegration(target, no_branch=no_branch)
+    if git.is_repo and not dry_run:
+        preflight = git.preflight()
+        if preflight.dirty_files:
+            log.thinking(
+                f"Git: {len(preflight.dirty_files)} uncommitted change(s) detected "
+                "in working tree:"
+            )
+            for f in preflight.dirty_files[:8]:
+                log.thinking(f"  {f}")
+            if len(preflight.dirty_files) > 8:
+                log.thinking(f"  … and {len(preflight.dirty_files) - 8} more")
+            log.thinking(
+                "Git: Turbine will only stage the files it writes — "
+                "your other changes will not be included in its commit."
+            )
+        try:
+            branch = git.create_branch()
+            if branch:
+                log.action(f"Git: created branch '{branch}'")
+        except RuntimeError as exc:
+            log.error(f"Git: could not create branch — {exc}")
+            log.thinking("Git: continuing on current branch.")
 
     # --json-events: use structured JSON emitter; otherwise use Rich dashboard
     if json_events:
@@ -72,6 +99,10 @@ async def run(
     with ui:
         await manager.run()
 
+    # Phase 7: Auto-commit for the non-review, non-dry-run path
+    if not dry_run and not review and manager.commit_result and manager.commit_result.written_count:
+        _git_auto_commit(git, manager, request, log)
+
     # Phase 6: Manual review gate
     if review and not dry_run:
         engine = CommitEngine(
@@ -82,6 +113,10 @@ async def run(
         )
         commit_result = engine.review_and_commit()
         manager.commit_result = commit_result
+
+        # Phase 7: Auto-commit after the user confirms the review gate
+        if commit_result.written_count:
+            _git_auto_commit(git, manager, request, log)
 
         # Run tests after confirmed commit
         if commit_result.written_count and test_commands:
@@ -106,6 +141,40 @@ async def run(
         )
         for task in manager.repair_tasks:
             log.error(f"  [{task.worker_id}] {task.ticket_description}")
+
+    # Phase 7: Diff / undo hints
+    diff_cmd = git.diff_hint()
+    if diff_cmd:
+        log.action(f"Git: review changes with:  {diff_cmd}")
+    undo_cmd = git.undo_hint()
+    if undo_cmd:
+        log.action(f"Git: undo Turbine's commit: {undo_cmd}")
+
+
+def _git_auto_commit(
+    git: GitIntegration,
+    manager: Manager,
+    user_request: str,
+    log: TurbineLogger,
+) -> None:
+    """Stage and commit all files Turbine wrote; log the outcome."""
+    if manager.commit_result is None:
+        return
+    written = [
+        f.relative_path
+        for f in manager.commit_result.files
+        if f.written and not f.dry_run
+    ]
+    if not written:
+        return
+    message = build_commit_message(manager.diagnosis, manager.tickets, user_request)
+    branch_label = f"'{git.branch}'" if git.branch else "current branch"
+    if git.auto_commit(written, message):
+        log.action(
+            f"Git: committed {len(written)} file(s) to {branch_label}"
+        )
+    else:
+        log.error("Git: auto-commit failed — stage and commit manually.")
 
 
 def main() -> None:
@@ -138,6 +207,10 @@ def main() -> None:
         "--verbose", action="store_true",
         help="Print LLM responses and extra reasoning detail",
     )
+    parser.add_argument(
+        "--no-branch", action="store_true", dest="no_branch",
+        help="Skip git branch creation; Turbine commits to the current branch instead",
+    )
     args = parser.parse_args()
 
     asyncio.run(run(
@@ -149,6 +222,7 @@ def main() -> None:
         args.no_ui,
         args.json_events,
         args.verbose,
+        args.no_branch,
     ))
 
 

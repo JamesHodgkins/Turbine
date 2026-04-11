@@ -1,0 +1,15 @@
+{
+  "id": "task-003",
+  "description": "Add None guard to greet() to avoid AttributeError",
+  "category": "single-file-edit",
+  "request": "The greet function crashes with AttributeError when name is None because it calls name.strip(). Add a guard so it returns 'Hello, stranger!' when name is None or empty.",
+  "snapshot": {
+    "greeter.py": "def greet(name):\n    \"\"\"Return a greeting for the given name.\"\"\"\n    return 'Hello, ' + name.strip() + '!'\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "greeter.py"},
+    {"type": "content_contains", "file": "greeter.py", "pattern": "None|stranger"},
+    {"type": "valid_python",     "file": "greeter.py"}
+  ],
+  "test_commands": []
+}
