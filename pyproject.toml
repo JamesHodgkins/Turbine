@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "turbine"
+version = "0.1.0"
+description = "Parallel agentic code engine with Manager-Worker architecture"
+requires-python = ">=3.12"
+dependencies = [
+    "mistralai>=1.0.0",
+    "mistral-common>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "asyncio-pool>=0.6.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+turbine = "turbine.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["turbine*"]

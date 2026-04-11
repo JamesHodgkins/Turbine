@@ -1,0 +1,6 @@
+mistralai>=1.0.0
+mistral-common>=1.0.0
+python-dotenv>=1.0.0
+asyncio-pool>=0.6.0
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
