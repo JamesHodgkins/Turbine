@@ -1,0 +1,16 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "compile",
+      "options": {
+        "cwd": "${workspaceFolder:vscode-turbine (Extension)}"
+      },
+      "group": "build",
+      "problemMatcher": ["$tsc"],
+      "label": "npm: compile",
+      "detail": "tsc -p ./"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: turbine
+Version: 0.1.0
+Summary: Parallel agentic code engine with Manager-Worker architecture
+Requires-Python: >=3.12
+License-File: LICENSE
+Requires-Dist: mistralai>=1.0.0
+Requires-Dist: mistral-common>=1.0.0
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: asyncio-pool>=0.6.0
+Requires-Dist: rich>=13.0.0
+Dynamic: license-file

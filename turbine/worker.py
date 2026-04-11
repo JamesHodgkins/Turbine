@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from turbine.logger import TurbineLogger
@@ -51,10 +51,12 @@ RETRY_BASE_DELAY = 1.0   # seconds; doubles each retry
 # Mistral HTTP status codes that warrant a retry
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
-WORKER_SYSTEM = """\
+_WORKER_SYSTEM_BASE = """\
 You are an expert software engineer working autonomously on a focused sub-task.
 You have been given:
-  • A task description.
+  • A task description, including a step-by-step pseudocode plan you MUST follow.
+  • The full Manager diagnosis for context (do not act on it directly — your ticket
+    is already scoped to your specific sub-task).
   • The complete current content of every file you are allowed to modify.
   • (Optionally) constraint feedback from the Manager if a previous proposal conflicted.
 
@@ -70,12 +72,26 @@ Rules:
   - Write the COMPLETE file content — not a diff, not a partial snippet.
   - The result must be syntactically valid and contain no duplicate definitions,
     unreachable code, or stray statements.
+  - Follow the pseudocode plan step-by-step — do not skip steps or collapse them.
   - If you have nothing to change, output nothing (an empty response).
 """
+
+
+def _build_worker_system(diagnosis: str) -> str:
+    """Inject the Manager's full diagnosis into the worker system prompt."""
+    if not diagnosis:
+        return _WORKER_SYSTEM_BASE
+    return (
+        _WORKER_SYSTEM_BASE
+        + f"\n## Manager Diagnosis (full context)\n{diagnosis}\n"
+    )
 
 WORKER_USER_TEMPLATE = """\
 ## Task
 {description}
+
+## Step-by-step implementation plan (follow exactly, in order)
+{plan}
 
 ## Files
 {file_contents}
@@ -87,8 +103,12 @@ staged by another worker. The Manager has flagged the following overlapping regi
 
 {conflicts}
 
-Please revise your response to avoid rewriting those line ranges of the original file.
-Produce complete corrected file contents using the same <file path="..."> format.
+The files below show their CURRENT state after the other worker's changes have been
+applied. You MUST base your new proposal on these updated contents — not the original
+file you were given at the start.  Write your complete new file(s) using the same
+<file path="..."> format, building on top of the current state shown here.
+
+{current_files}
 """
 
 
@@ -108,6 +128,27 @@ def _extract_file_blocks(text: str) -> dict[str, str]:
         m.group(1).strip(): m.group(2)
         for m in _FILE_BLOCK.finditer(text)
     }
+
+
+# ---------------------------------------------------------------------------
+# Lock helpers
+# ---------------------------------------------------------------------------
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _acquire_all(locks: list[asyncio.Lock]):
+    """Acquire a list of asyncio.Locks in order, release in reverse."""
+    acquired: list[asyncio.Lock] = []
+    try:
+        for lock in locks:
+            await lock.acquire()
+            acquired.append(lock)
+        yield
+    finally:
+        for lock in reversed(acquired):
+            lock.release()
 
 
 # ---------------------------------------------------------------------------
@@ -141,9 +182,12 @@ class Worker:
     client: object          # mistralai.client.Mistral — typed as object to avoid circular import
     model: str
     token_manager: object   # turbine.token_manager.TokenManager
+    diagnosis: str = ""     # full Manager diagnosis injected into system prompt
+    file_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     max_handshake_attempts: int = MAX_HANDSHAKE_ATTEMPTS
     max_api_retries: int = MAX_API_RETRIES
     ui: object | None = None   # turbine.ui.TurbineUI — optional, typed as object to avoid circular import
+    verbose: bool = False
 
     def __post_init__(self) -> None:
         self.log = TurbineLogger()
@@ -153,8 +197,16 @@ class Worker:
     # Public entry point
     # ------------------------------------------------------------------
 
-    async def run(self) -> WorkerResult:
-        """Run the handshake loop and return a WorkerResult."""
+    async def run(self, repair_feedback: str = "") -> WorkerResult:
+        """Run the handshake loop and return a WorkerResult.
+
+        Parameters
+        ----------
+        repair_feedback:
+            When non-empty, this is test-failure output from a previous verify
+            cycle.  It is prepended to the initial user message so the LLM
+            knows what broke and can fix it before re-proposing.
+        """
         self.log.thinking(f"Worker [{self.ticket.id}] — starting: {self.ticket.description}")
         if self.ui:
             self.ui.on_worker_start(self.ticket.id, self.ticket.description)
@@ -162,14 +214,23 @@ class Worker:
         file_contents = self._build_file_contents()
         initial_user = WORKER_USER_TEMPLATE.format(
             description=self.ticket.description,
+            plan=self.ticket.context or "(no plan provided — use your best judgement)",
             file_contents=file_contents,
         )
 
+        if repair_feedback:
+            initial_user = (
+                "## Test failures from previous attempt (you must fix these)\n"
+                f"```\n{repair_feedback}\n```\n\n"
+            ) + initial_user
+
         # Conversation history: [system, user, assistant, user, ...]
         messages: list[dict] = [
-            {"role": "system", "content": WORKER_SYSTEM},
+            {"role": "system", "content": _build_worker_system(self.diagnosis)},
             {"role": "user",   "content": initial_user},
         ]
+
+        conflict_retry = False  # True after the first conflict — diff against snapshot
 
         for attempt in range(1, self.max_handshake_attempts + 1):
             self.log.thinking(
@@ -192,6 +253,15 @@ class Worker:
 
             messages.append({"role": "assistant", "content": assistant_text})
 
+            if self.verbose:
+                # Show a trimmed preview of the raw LLM response
+                preview = assistant_text[:400].replace("\n", " ↵ ")
+                suffix = "…" if len(assistant_text) > 400 else ""
+                self.log.verbose(
+                    f"Worker [{self.ticket.id}] raw response ({len(assistant_text)} chars): "
+                    f"{preview}{suffix}"
+                )
+
             # Parse the file blocks from the LLM response
             file_blocks = _extract_file_blocks(assistant_text)
             if not file_blocks:
@@ -200,11 +270,21 @@ class Worker:
                     self.ui.on_worker_done(self.ticket.id, success=True, detail="no changes")
                 return WorkerResult(ticket_id=self.ticket.id, success=True, proposed_diff="")
 
-            # Convert complete file contents → unified diff against the VFS baseline
-            diff = self._build_diff_from_blocks(file_blocks)
+            if self.verbose:
+                for path, content in file_blocks.items():
+                    self.log.verbose(
+                        f"Worker [{self.ticket.id}] parsed block '{path}' "
+                        f"({len(content.splitlines())} lines)"
+                    )
 
-            # Handshake: check for conflicts
-            approved, constraint_msg = self._check_and_stage(diff)
+            # Convert complete file contents → unified diff.
+            # On conflict retries we diff against the current snapshot (which
+            # already contains the winning worker's staged changes) so our hunks
+            # land cleanly on top rather than re-conflicting with the baseline.
+            diff = self._build_diff_from_blocks(file_blocks, use_snapshot=conflict_retry)
+
+            # Handshake: check for conflicts (acquires per-file locks)
+            approved, constraint_msg = await self._check_and_stage(diff)
             if approved:
                 self.log.action(f"Worker [{self.ticket.id}] — diff approved and staged.")
                 if self.ui:
@@ -215,15 +295,21 @@ class Worker:
                     proposed_diff=diff,
                 )
 
-            # Rejected — send constraint feedback and loop
+            # Rejected — send constraint feedback with CURRENT file contents so
+            # the LLM can write its changes on top of the already-staged state.
+            conflict_retry = True
             self.log.thinking(
                 f"Worker [{self.ticket.id}] — conflicts detected, sending constraints."
             )
             if self.ui:
                 self.ui.on_worker_conflict(self.ticket.id, detail=constraint_msg[:60])
+            current_files = self._build_file_contents()   # reads current snapshot
             messages.append({
                 "role": "user",
-                "content": CONSTRAINT_TEMPLATE.format(conflicts=constraint_msg),
+                "content": CONSTRAINT_TEMPLATE.format(
+                    conflicts=constraint_msg,
+                    current_files=current_files,
+                ),
             })
 
         # Exhausted all attempts
@@ -240,20 +326,26 @@ class Worker:
     # Diff generation from complete file blocks
     # ------------------------------------------------------------------
 
-    def _build_diff_from_blocks(self, file_blocks: dict[str, str]) -> str:
+    def _build_diff_from_blocks(
+        self, file_blocks: dict[str, str], use_snapshot: bool = False
+    ) -> str:
         """Compute a unified diff from LLM-supplied complete file contents.
 
-        For each file in *file_blocks*, diffs the current VFS baseline against
-        the new content using ``difflib``.  Returns a combined unified diff
-        string covering all modified files.
+        For each file in *file_blocks*, diffs against the VFS baseline (default)
+        or the current snapshot (``use_snapshot=True``, used on conflict retries
+        so the diff lands cleanly on top of already-staged changes).
+        Returns a combined unified diff string covering all modified files.
         """
         parts: list[str] = []
         for rel, new_content in file_blocks.items():
-            baseline = self.vfs.get_baseline(rel)
-            if baseline is None:
-                self.log.error(f"Worker [{self.ticket.id}] — no baseline for '{rel}', skipping.")
+            if use_snapshot:
+                ref = self.vfs.get_snapshot(rel)
+            else:
+                ref = self.vfs.get_baseline(rel)
+            if ref is None:
+                self.log.error(f"Worker [{self.ticket.id}] — no VFS reference for '{rel}', skipping.")
                 continue
-            old_lines = [l + "\n" for l in baseline]
+            old_lines = [l + "\n" for l in ref]
             new_lines = [l + "\n" for l in new_content.splitlines()]
             # Ensure trailing newline is represented
             if new_lines and not new_lines[-1].endswith("\n"):
@@ -270,8 +362,12 @@ class Worker:
     # Handshake: conflict detection and VFS staging
     # ------------------------------------------------------------------
 
-    def _check_and_stage(self, diff: str) -> tuple[bool, str]:
-        """Apply diff to VFS, run conflict detection, roll back if conflicts found.
+    async def _check_and_stage(self, diff: str) -> tuple[bool, str]:
+        """Acquire per-file locks, apply diff to VFS, detect conflicts, roll back if needed.
+
+        Acquiring file locks before mutating the VFS means workers that share
+        a file are serialised: the second worker will see the first worker's
+        committed snapshot rather than racing against a stale baseline.
 
         Returns
         -------
@@ -282,17 +378,22 @@ class Worker:
         if not diff:
             return True, ""
 
-        try:
-            applied_hunks = self.vfs.apply_diff(self.ticket.id, diff)
-        except ValueError as exc:
-            return False, str(exc)
+        # Acquire all relevant file locks in sorted order to prevent deadlock.
+        lock_keys = sorted(f for f in self.ticket.relevant_files if f in self.file_locks)
+        locks = [self.file_locks[k] for k in lock_keys]
 
-        conflicts = self._conflict_detector.check()
-        if not conflicts:
-            return True, ""
+        async with _acquire_all(locks):
+            try:
+                applied_hunks = self.vfs.apply_diff(self.ticket.id, diff)
+            except ValueError as exc:
+                return False, str(exc)
 
-        # Roll back: revert both the staged list and the snapshot mutation
-        self.vfs.rollback_diff(applied_hunks)
+            conflicts = self._conflict_detector.check()
+            if not conflicts:
+                return True, ""
+
+            # Roll back: revert both the staged list and the snapshot mutation
+            self.vfs.rollback_diff(applied_hunks)
 
         constraint_msg = "\n".join(str(c) for c in conflicts)
         return False, constraint_msg

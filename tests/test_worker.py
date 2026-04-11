@@ -9,20 +9,19 @@ import pytest
 
 from turbine.manager import Ticket, WorkerResult
 from turbine.vfs import VirtualFileSystem
-from turbine.worker import Worker, _extract_diff, CONSTRAINT_TEMPLATE
+from turbine.worker import Worker, _extract_file_blocks, CONSTRAINT_TEMPLATE
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-SIMPLE_DIFF = """\
---- a/src/main.py
-+++ b/src/main.py
-@@ -1,3 +1,4 @@
- def main():
-+    print("hello")
-     pass
+SIMPLE_FILE_BLOCK = """\
+<file path="src/main.py">
+def main():
+    print("hello")
+    pass
+</file>
 """
 
 
@@ -69,33 +68,35 @@ def _make_worker(
 
 
 # ---------------------------------------------------------------------------
-# _extract_diff
+# _extract_file_blocks
 # ---------------------------------------------------------------------------
 
-class TestExtractDiff:
-    def test_plain_diff(self):
-        result = _extract_diff(SIMPLE_DIFF)
-        assert result.startswith("---")
-        assert "+++ b/src/main.py" in result
+class TestExtractFileBlocks:
+    def test_single_block(self):
+        result = _extract_file_blocks(SIMPLE_FILE_BLOCK)
+        assert "src/main.py" in result
+        assert 'print("hello")' in result["src/main.py"]
 
-    def test_diff_wrapped_in_prose(self):
-        text = "Here is my change:\n" + SIMPLE_DIFF + "\nDone."
-        result = _extract_diff(text)
-        assert result.startswith("---")
+    def test_multiple_blocks(self):
+        text = (
+            '<file path="a.py">x = 1\n</file>\n'
+            '<file path="b.py">y = 2\n</file>\n'
+        )
+        result = _extract_file_blocks(text)
+        assert set(result.keys()) == {"a.py", "b.py"}
 
-    def test_diff_in_markdown_fence(self):
-        text = "```diff\n" + SIMPLE_DIFF + "\n```"
-        result = _extract_diff(text)
-        assert "+++" in result
-        assert "```" not in result
+    def test_block_wrapped_in_prose(self):
+        text = "Here is my change:\n" + SIMPLE_FILE_BLOCK + "\nDone."
+        result = _extract_file_blocks(text)
+        assert "src/main.py" in result
 
-    def test_no_diff_returns_empty(self):
-        assert _extract_diff("No changes needed.") == ""
+    def test_no_blocks_returns_empty(self):
+        assert _extract_file_blocks("No changes needed.") == {}
 
-    def test_git_diff_header(self):
-        text = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1 +1 @@\n-x\n+y\n"
-        result = _extract_diff(text)
-        assert result.startswith("diff --git")
+    def test_path_is_stripped(self):
+        text = '<file path="  spaced/path.py  ">content\n</file>'
+        result = _extract_file_blocks(text)
+        assert "spaced/path.py" in result
 
 
 # ---------------------------------------------------------------------------
@@ -117,17 +118,16 @@ class TestWorkerRun:
         assert result.success
         assert result.proposed_diff == ""
 
-    def test_valid_diff_approved_and_staged(self):
+    def test_valid_file_block_approved_and_staged(self):
         vfs = _make_vfs({"src/main.py": "def main():\n    pass\n"})
-        diff = (
-            "--- a/src/main.py\n"
-            "+++ b/src/main.py\n"
-            "@@ -1,2 +1,3 @@\n"
-            " def main():\n"
-            "+    print('hi')\n"
-            "     pass\n"
+        file_block = (
+            '<file path="src/main.py">\n'
+            "def main():\n"
+            "    print('hi')\n"
+            "    pass\n"
+            "</file>\n"
         )
-        worker = _make_worker(self._ticket(), vfs, response_text=diff)
+        worker = _make_worker(self._ticket(), vfs, response_text=file_block)
         result = asyncio.run(worker.run())
         assert result.success
         assert result.proposed_diff != ""
@@ -165,7 +165,7 @@ class TestHandshake:
         """Stage a diff for ticket-1 first, then run ticket-2 on the same lines."""
         vfs, t1, t2 = self._two_ticket_vfs()
 
-        # Stage ticket-1's diff directly
+        # Stage ticket-1's diff directly (replaces line 1 "a" → "A")
         diff_t1 = (
             "--- a/f.py\n+++ b/f.py\n"
             "@@ -1,2 +1,2 @@\n"
@@ -173,16 +173,14 @@ class TestHandshake:
         )
         vfs.apply_diff("ticket-1", diff_t1)
 
-        # ticket-2 tries to modify the same line 1 on first attempt,
-        # then backs off with an empty response on the second attempt.
-        diff_t2_conflict = (
-            "--- a/f.py\n+++ b/f.py\n"
-            "@@ -1,2 +1,2 @@\n"
-            "-a\n+Z\n b\n"
+        # ticket-2 tries to replace line 1 (same hunk) → conflict.
+        # On second attempt it backs off with no changes.
+        file_block_conflict = (
+            '<file path="f.py">\nZ\nb\nc\nd\ne\n</file>\n'
         )
         client = MagicMock()
         client.chat.complete_async = AsyncMock(side_effect=[
-            MagicMock(choices=[MagicMock(message=MagicMock(content=diff_t2_conflict))]),
+            MagicMock(choices=[MagicMock(message=MagicMock(content=file_block_conflict))]),
             MagicMock(choices=[MagicMock(message=MagicMock(content="No changes needed."))]),
         ])
         worker = Worker(
@@ -199,10 +197,10 @@ class TestHandshake:
         assert result.success
 
     def test_exceeds_max_attempts_returns_failure(self):
-        """Worker that always proposes a conflicting diff should eventually fail."""
+        """Worker that always proposes a conflicting file block should eventually fail."""
         vfs, t1, t2 = self._two_ticket_vfs()
 
-        # Pre-stage ticket-1
+        # Pre-stage ticket-1 (replaces line 1 "a" → "A")
         diff_t1 = (
             "--- a/f.py\n+++ b/f.py\n"
             "@@ -1,2 +1,2 @@\n"
@@ -210,15 +208,11 @@ class TestHandshake:
         )
         vfs.apply_diff("ticket-1", diff_t1)
 
-        # ticket-2 always proposes the same conflicting diff
-        conflicting_diff = (
-            "--- a/f.py\n+++ b/f.py\n"
-            "@@ -1,2 +1,2 @@\n"
-            "-a\n+Z\n b\n"
-        )
+        # ticket-2 always proposes the same conflicting rewrite of line 1
+        conflicting_block = '<file path="f.py">\nZ\nb\nc\nd\ne\n</file>\n'
         worker = _make_worker(
             t2, vfs,
-            response_text=conflicting_diff,
+            response_text=conflicting_block,
             max_handshake_attempts=2,
         )
         result = asyncio.run(worker.run())

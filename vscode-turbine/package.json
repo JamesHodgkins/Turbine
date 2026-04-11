@@ -1,0 +1,66 @@
+{
+  "name": "vscode-turbine",
+  "displayName": "Turbine",
+  "description": "Parallel agentic code engine — VS Code integration",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "turbine-sidebar",
+          "title": "Turbine",
+          "icon": "media/turbine-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "turbine-sidebar": [
+        {
+          "type": "webview",
+          "id": "turbine.sidebarView",
+          "name": "Turbine"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "turbine.run",
+        "title": "Turbine: Run on Workspace"
+      },
+      {
+        "command": "turbine.runDryRun",
+        "title": "Turbine: Dry Run (no disk writes)"
+      }
+    ],
+    "configuration": {
+      "title": "Turbine",
+      "properties": {
+        "turbine.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the turbine CLI or Python interpreter. E.g. 'C:\\path\\to\\.venv\\Scripts\\python.exe -m turbine'. Leave blank to auto-detect a .venv in the project."
+        },
+        "turbine.extraArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Extra CLI arguments appended to every turbine invocation."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -1,0 +1,5 @@
+mistralai>=1.0.0
+mistral-common>=1.0.0
+python-dotenv>=1.0.0
+asyncio-pool>=0.6.0
+rich>=13.0.0

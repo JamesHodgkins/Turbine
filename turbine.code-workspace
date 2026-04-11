@@ -1,0 +1,15 @@
+{
+  "folders": [
+    {
+      "name": "AgentTest (Python)",
+      "path": "."
+    },
+    {
+      "name": "vscode-turbine (Extension)",
+      "path": "vscode-turbine"
+    }
+  ],
+  "settings": {
+    "turbine.pythonPath": "C:\\Users\\james\\Documents\\Creative\\Agent\\AgentTest\\.venv\\Scripts\\python.exe -m turbine"
+  }
+}

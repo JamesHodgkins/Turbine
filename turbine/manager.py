@@ -71,20 +71,111 @@ Return nothing but the JSON array — no prose, no markdown fences."""
 
 INVESTIGATE_SYSTEM = """\
 You are Turbine's Investigator. Given a user request and the contents of relevant \
-files, produce a structured diagnosis and task decomposition. \
+files, produce a structured diagnosis and task decomposition.
+
+Critical decomposition rule:
+  - NEVER assign the same file to more than one ticket.  If multiple logical
+    concerns all touch the same file, combine them into a single ticket whose
+    plan covers all concerns in sequence.  Parallel tickets that share a file
+    WILL conflict and WILL fail.
+
+Rules for the "context" field of each ticket:
+  - It MUST contain a numbered, step-by-step pseudocode plan the worker will follow
+    verbatim. Do not say "refactor X" — say exactly HOW: which data structures, which
+    algorithm (e.g. "Kahn's topological sort"), which loop invariants to maintain.
+  - Each step should be 1–2 sentences. Aim for 4–8 steps per ticket.
+  - Name specific functions / classes / variables that must change and how.
+
 Return ONLY a JSON object with this exact shape:
 {
-  "diagnosis": "<brief description of the issue or goal>",
+  "diagnosis": "<thorough description of the root cause or goal — be specific>",
   "tickets": [
     {
       "id": "ticket-1",
       "description": "<what this sub-task achieves>",
       "relevant_files": ["<relative path>", ...],
-      "context": "<any extra notes for the worker>"
+      "context": "1. <step>\\n2. <step>\\n3. <step>\\n..."
     }
   ]
 }
 Return nothing but the JSON object — no prose, no markdown fences."""
+
+
+def _merge_overlapping_tickets(tickets: list[Ticket]) -> list[Ticket]:
+    """Merge any tickets that share at least one file into a single ticket.
+
+    The LLM often splits single-file work across multiple tickets despite
+    being told not to.  Multiple tickets touching the same file will always
+    conflict at staging time, so we enforce the constraint here in code by
+    union-finding all groups that overlap and combining them.
+
+    Merged ticket keeps the id of the first ticket in the group.  Descriptions
+    and context plans are concatenated in order so no intent is lost.
+    """
+    if not tickets:
+        return tickets
+
+    # Union-Find over ticket indices
+    parent = list(range(len(tickets)))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x: int, y: int) -> None:
+        parent[find(x)] = find(y)
+
+    # Build file → ticket-index map; union tickets that share a file
+    file_to_idx: dict[str, int] = {}
+    for i, ticket in enumerate(tickets):
+        for f in ticket.relevant_files:
+            if f in file_to_idx:
+                union(i, file_to_idx[f])
+            else:
+                file_to_idx[f] = i
+
+    # Group tickets by their root
+    from collections import defaultdict
+    groups: dict[int, list[int]] = defaultdict(list)
+    for i in range(len(tickets)):
+        groups[find(i)].append(i)
+
+    merged: list[Ticket] = []
+    for indices in groups.values():
+        indices.sort()
+        if len(indices) == 1:
+            merged.append(tickets[indices[0]])
+            continue
+        # Merge the group into one ticket
+        base = tickets[indices[0]]
+        all_files: list[str] = []
+        seen_files: set[str] = set()
+        for idx in indices:
+            for f in tickets[idx].relevant_files:
+                if f not in seen_files:
+                    all_files.append(f)
+                    seen_files.add(f)
+        combined_desc = "; ".join(tickets[idx].description for idx in indices)
+        combined_context = "\n\n".join(
+            f"[Originally ticket-{tickets[idx].id}]\n{tickets[idx].context}"
+            for idx in indices
+            if tickets[idx].context
+        )
+        merged.append(Ticket(
+            id=base.id,
+            description=combined_desc,
+            relevant_files=all_files,
+            context=combined_context,
+        ))
+
+    # Restore stable order (by first-seen index of the root ticket)
+    root_order = {find(i): i for i in range(len(tickets))}
+    merged.sort(key=lambda t: root_order.get(
+        next(i for i, tk in enumerate(tickets) if tk.id == t.id), 0
+    ))
+    return merged
 
 
 class Manager:
@@ -117,6 +208,7 @@ class Manager:
         test_commands: list[str] | None = None,
         dry_run: bool = False,
         ui: TurbineUI | None = None,
+        verbose: bool = False,
     ) -> None:
         self.tree = tree
         self.user_request = user_request
@@ -125,11 +217,16 @@ class Manager:
         self.max_workers = max_workers
         self.test_commands = test_commands or []
         self.dry_run = dry_run
+        self.verbose = verbose
         self.ui = ui or TurbineUI(enabled=False)   # no-op by default
         self.log = TurbineLogger()
         self.token_manager = TokenManager(model)
         self._client = Mistral(api_key=api_key or os.environ["MISTRAL_API_KEY"])
         self.vfs = VirtualFileSystem()
+
+        # Per-file asyncio locks — workers that share a file are serialised
+        # so only one holds the "write token" at a time.
+        self._file_locks: dict[str, asyncio.Lock] = {}
 
         # Populated by each step
         self.relevant_files: list[str] = []
@@ -242,10 +339,29 @@ class Manager:
             self.log.error(f"Investigate: could not parse LLM response — {exc}")
             self.tickets = []
 
+        # Enforce: no two tickets may share a file.  Merge any that do so the
+        # LLM's tendency to split single-file work into multiple tickets doesn't
+        # cause guaranteed conflicts at delegation time.
+        before = len(self.tickets)
+        self.tickets = _merge_overlapping_tickets(self.tickets)
+        if len(self.tickets) < before:
+            self.log.action(
+                f"Investigate: merged {before} ticket(s) → {len(self.tickets)} "
+                "(shared-file collision resolved)"
+            )
+
         self.log.action(
-            f"Investigate complete — diagnosis: \"{self.diagnosis}\" | "
-            f"{len(self.tickets)} ticket(s) created."
+            f"Investigate complete - {len(self.tickets)} ticket(s) created."
         )
+        if self.diagnosis:
+            self.log.thinking(f"Diagnosis: {self.diagnosis}")
+        for ticket in self.tickets:
+            files_label = ", ".join(ticket.relevant_files) if ticket.relevant_files else "-"
+            self.log.action(
+                f"  [{ticket.id}] {ticket.description}  |  files: {files_label}"
+            )
+            if self.verbose and ticket.context:
+                self.log.verbose(f"    context: {ticket.context}")
         return self.tickets
 
     # ------------------------------------------------------------------
@@ -278,6 +394,14 @@ class Manager:
 
         semaphore = asyncio.Semaphore(self.max_workers)
 
+        # Build one lock per unique file across all tickets.
+        # Workers that share a file will acquire its lock before proposing
+        # a diff, serialising them so the second worker sees the first
+        # worker's committed changes rather than racing against them.
+        all_files = {f for t in self.tickets for f in t.relevant_files}
+        for f in all_files:
+            self._file_locks.setdefault(f, asyncio.Lock())
+
         async def bounded(ticket: Ticket) -> WorkerResult:
             async with semaphore:
                 return await self._run_worker(ticket)
@@ -287,8 +411,15 @@ class Manager:
 
         successes = sum(1 for r in self.worker_results if r.success)
         self.log.action(
-            f"Delegate complete — {successes}/{len(self.worker_results)} worker(s) succeeded."
+            f"Delegate complete - {successes}/{len(self.worker_results)} worker(s) succeeded."
         )
+        for result in self.worker_results:
+            if result.success:
+                lines = result.proposed_diff.count("\n") if result.proposed_diff else 0
+                detail = f"{lines} diff line(s)" if lines else "no changes"
+                self.log.action(f"  [{result.ticket_id}] approved — {detail}")
+            else:
+                self.log.error(f"  [{result.ticket_id}] failed — {result.error[:120]}")
         return self.worker_results
 
     # ------------------------------------------------------------------
@@ -299,13 +430,19 @@ class Manager:
         """Spin up a Worker for *ticket* and return its result."""
         from turbine.worker import Worker  # local import avoids circular dependency
 
+        # Collect the per-file locks for the files this ticket touches.
+        file_locks = {f: self._file_locks[f] for f in ticket.relevant_files if f in self._file_locks}
+
         worker = Worker(
             ticket=ticket,
             vfs=self.vfs,
             client=self._client,
             model=self.model,
             token_manager=self.token_manager,
+            diagnosis=self.diagnosis,
+            file_locks=file_locks,
             ui=self.ui,
+            verbose=self.verbose,
         )
         return await worker.run()
 
@@ -369,6 +506,91 @@ class Manager:
         return self.commit_result, self.test_results, self.repair_tasks
 
     # ------------------------------------------------------------------
+    # Step 5b: Repair loop
+    # ------------------------------------------------------------------
+
+    MAX_REPAIR_ROUNDS = 2
+
+    async def _repair_loop(
+        self,
+        repair_tasks: list[RepairTask],
+        round_num: int = 1,
+    ) -> None:
+        """Re-run workers that have failing tests, then re-verify.
+
+        Each failing worker is re-spawned with the test failure output
+        appended to its conversation so the LLM can fix its own code.
+        After all repairs complete, the VFS is re-committed and tests
+        are re-run.  This repeats up to ``MAX_REPAIR_ROUNDS`` times.
+        """
+        if not repair_tasks or round_num > self.MAX_REPAIR_ROUNDS:
+            if round_num > self.MAX_REPAIR_ROUNDS:
+                self.log.error(
+                    f"Repair loop exhausted after {self.MAX_REPAIR_ROUNDS} round(s) — "
+                    "tests still failing."
+                )
+            return
+
+        self.log.thinking(
+            f"Step 5b — Repair round {round_num}/{self.MAX_REPAIR_ROUNDS}: "
+            f"re-running {len(repair_tasks)} worker(s)…"
+        )
+
+        # Build a lookup from worker_id → Ticket
+        ticket_by_id: dict[str, Ticket] = {t.id: t for t in self.tickets}
+
+        async def _repair_one(rt: RepairTask) -> WorkerResult:
+            from turbine.worker import Worker  # avoid circular import
+
+            ticket = ticket_by_id.get(rt.worker_id)
+            if ticket is None:
+                return WorkerResult(
+                    ticket_id=rt.worker_id,
+                    success=False,
+                    error=f"No ticket found for worker '{rt.worker_id}'",
+                )
+
+            file_locks = {
+                f: self._file_locks[f]
+                for f in ticket.relevant_files
+                if f in self._file_locks
+            }
+
+            worker = Worker(
+                ticket=ticket,
+                vfs=self.vfs,
+                client=self._client,
+                model=self.model,
+                token_manager=self.token_manager,
+                diagnosis=self.diagnosis,
+                file_locks=file_locks,
+                ui=self.ui,
+                verbose=self.verbose,
+            )
+            # Inject test failure so the worker knows what to fix
+            return await worker.run(repair_feedback=rt.failure_output)
+
+        repair_semaphore = asyncio.Semaphore(self.max_workers)
+
+        async def bounded_repair(rt: RepairTask) -> WorkerResult:
+            async with repair_semaphore:
+                return await _repair_one(rt)
+
+        repair_results = await asyncio.gather(
+            *(bounded_repair(rt) for rt in repair_tasks)
+        )
+
+        # Merge repair results back into worker_results
+        result_by_id = {r.ticket_id: r for r in self.worker_results}
+        for r in repair_results:
+            result_by_id[r.ticket_id] = r
+        self.worker_results = list(result_by_id.values())
+
+        # Re-commit and re-test
+        _, _, next_repair_tasks = await self.verify()
+        await self._repair_loop(next_repair_tasks, round_num + 1)
+
+    # ------------------------------------------------------------------
     # Full pipeline: Steps 2 → 3 → 4 → 5
     # ------------------------------------------------------------------
 
@@ -379,12 +601,32 @@ class Manager:
         await self.investigate()
         await self.delegate()
         if self.test_commands or not self.dry_run:
-            await self.verify()
+            _, _, repair_tasks = await self.verify()
+            if repair_tasks:
+                await self._repair_loop(repair_tasks)
         successes = sum(1 for r in self.worker_results if r.success)
         self.ui.on_done(
             f"{successes}/{len(self.worker_results)} worker(s) succeeded"
             if self.worker_results else "pipeline complete"
         )
+
+        # Emit structured detail for JSON-mode consumers (VS Code extension etc.)
+        from turbine.json_ui import JsonEventUI
+        if isinstance(self.ui, JsonEventUI):
+            files_written = self.commit_result.written_count if self.commit_result else 0
+            diff_lines = sum(
+                len(r.proposed_diff.splitlines()) for r in self.worker_results
+            )
+            self.ui.on_done_detail(
+                workers_succeeded=successes,
+                workers_total=len(self.worker_results),
+                files_written=files_written,
+                diff_lines=diff_lines,
+                dry_run=self.dry_run,
+                tickets=[t.to_dict() for t in self.tickets],
+                diagnosis=self.diagnosis,
+            )
+
         return self.worker_results
 
     # ------------------------------------------------------------------

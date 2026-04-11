@@ -37,4 +37,7 @@
 
 - [x] Create a rich CLI showing the status of each worker in real time.
 - [x] Add a Manual Review gate before the VFS writes to disk.
-- [ ] Stretch goal: plan a VS Code Extension wrapper (LSP integration).
+- [x] Add `JsonEventUI` + `--json-events` flag to Python backend
+- [x] Scaffold VS Code extension (TypeScript)
+- [x] Wire subprocess runner + WebView panel
+- [x] Package Python side as installable CLI (`pip install`)

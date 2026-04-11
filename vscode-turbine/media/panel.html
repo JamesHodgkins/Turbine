@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{{NONCE}}';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Turbine</title>
+  <style>
+    :root {
+      --bg:       var(--vscode-sideBar-background,        #252526);
+      --fg:       var(--vscode-sideBar-foreground,        #cccccc);
+      --border:   var(--vscode-sideBarSectionHeader-border, #3c3c3c);
+      --input-bg: var(--vscode-input-background,          #3c3c3c);
+      --input-fg: var(--vscode-input-foreground,          #cccccc);
+      --input-border: var(--vscode-input-border,          #3c3c3c);
+      --btn-bg:   var(--vscode-button-background,         #0e639c);
+      --btn-fg:   var(--vscode-button-foreground,         #ffffff);
+      --btn-hover:var(--vscode-button-hoverBackground,    #1177bb);
+      --accent:   var(--vscode-focusBorder,               #007fd4);
+      --green:  #4ec94e;
+      --red:    #f44747;
+      --yellow: #e5c07b;
+      --cyan:   #56b6c2;
+      --magenta:#c678dd;
+      --dim:    #6a6a6a;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--vscode-font-family, system-ui, sans-serif);
+      font-size: var(--vscode-font-size, 13px);
+    }
+
+    #app { display: flex; flex-direction: column; height: 100vh; }
+    #history { flex: 1; overflow-y: auto; padding: 10px 12px 6px; }
+
+    #composer {
+      border-top: 1px solid var(--border);
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: var(--bg);
+    }
+
+    /* ── Empty state ────────────────────────────────────────── */
+    #empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100%; gap: 8px;
+      color: var(--dim); font-size: 12px; text-align: center; padding: 20px;
+    }
+    #empty-state .logo { font-size: 28px; }
+
+    /* ── Run block ──────────────────────────────────────────── */
+    .run-block { margin-bottom: 14px; }
+
+    .run-header {
+      display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;
+    }
+    .run-prompt { font-weight: 600; font-size: 13px; color: var(--fg); flex: 1; }
+    .run-meta { font-size: 11px; color: var(--dim); white-space: nowrap; }
+    .run-badge {
+      font-size: 10px; padding: 1px 6px; border-radius: 3px;
+      background: color-mix(in srgb, var(--accent) 20%, transparent);
+      color: var(--cyan);
+      border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+
+    /* ── Step cards ─────────────────────────────────────────── */
+    .step-cards { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+
+    .step-card {
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .step-card.step-active { border-color: var(--accent); }
+    .step-card.step-done {
+      border-color: color-mix(in srgb, var(--green) 35%, var(--border));
+    }
+    .step-card.step-error { border-color: var(--red); }
+
+    .step-card-header {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 8px; cursor: pointer;
+      background: color-mix(in srgb, var(--border) 20%, transparent);
+      user-select: none;
+    }
+    .step-card-header:hover {
+      background: color-mix(in srgb, var(--border) 40%, transparent);
+    }
+    .step-card.step-active .step-card-header {
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+    .step-card.step-done .step-card-header {
+      background: color-mix(in srgb, var(--green) 6%, transparent);
+    }
+    .step-card.step-error .step-card-header {
+      background: color-mix(in srgb, var(--red) 8%, transparent);
+    }
+
+    .step-icon { font-size: 11px; width: 14px; text-align: center; flex-shrink: 0; color: var(--dim); }
+    .step-card.step-active .step-icon { color: var(--cyan); }
+    .step-card.step-done   .step-icon { color: var(--green); }
+    .step-card.step-error  .step-icon { color: var(--red); }
+
+    .step-name {
+      font-size: 11px; font-weight: 600; white-space: nowrap; flex-shrink: 0; color: var(--fg);
+    }
+    .step-card.step-done .step-name {
+      color: color-mix(in srgb, var(--fg) 65%, var(--dim));
+    }
+
+    .step-live {
+      font-size: 11px; color: var(--dim); flex: 1;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      padding-left: 4px;
+    }
+    .step-card.step-active .step-live { color: var(--fg); }
+
+    .step-count {
+      font-size: 10px; color: var(--dim); white-space: nowrap; flex-shrink: 0;
+      padding: 1px 5px; border-radius: 3px;
+      background: color-mix(in srgb, var(--border) 50%, transparent);
+    }
+
+    .step-arrow {
+      font-size: 9px; color: var(--dim); transition: transform 0.15s; flex-shrink: 0;
+    }
+
+    .step-card-body {
+      border-top: 1px solid var(--border);
+    }
+
+    /* Workers section inside step card */
+    .step-workers {
+      padding: 6px 8px 4px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+    }
+    .worker-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .worker-table th {
+      text-align: left; color: var(--dim); font-weight: 500;
+      padding: 2px 6px 4px 0; border-bottom: 1px solid var(--border);
+    }
+    .worker-table td {
+      padding: 3px 6px 3px 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+      vertical-align: top;
+    }
+    .worker-table tr:last-child td { border-bottom: none; }
+    .status-pending  { color: var(--dim); }
+    .status-running  { color: var(--cyan); }
+    .status-approved { color: var(--green); }
+    .status-conflict { color: var(--yellow); }
+    .status-failed   { color: var(--red); }
+    .status-repair   { color: var(--magenta); }
+    .worker-detail   { font-size: 10px; color: var(--dim); margin-top: 1px; }
+
+    /* Log lines inside step card */
+    .step-logs {
+      padding: 5px 8px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+    .log-line { white-space: pre-wrap; word-break: break-all; }
+    .log-thinking { color: var(--cyan); }
+    .log-action   { color: var(--green); }
+    .log-error    { color: var(--red); }
+    .log-debug    { color: var(--dim); }
+    .log-done     { color: var(--green); font-weight: 600; }
+
+    /* ── Run status footer ──────────────────────────────────── */
+    .run-status { font-size: 11px; color: var(--dim); padding-top: 2px; }
+    .run-status.running::before { content: "● "; color: var(--cyan); }
+    .run-status.done::before    { content: "✓ "; color: var(--green); }
+    .run-status.error::before   { content: "✗ "; color: var(--red); }
+
+    /* ── Result card ────────────────────────────────────────── */
+    .result-card {
+      margin-top: 8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+    }
+    .result-card-header {
+      display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+      background: color-mix(in srgb, var(--green) 10%, transparent);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600; font-size: 12px; color: var(--green);
+    }
+    .result-card-header.dry-run {
+      background: color-mix(in srgb, var(--yellow) 10%, transparent);
+      color: var(--yellow);
+    }
+    .result-stats {
+      display: flex; gap: 16px; padding: 7px 10px; font-size: 11px;
+      border-bottom: 1px solid var(--border);
+    }
+    .stat { display: flex; flex-direction: column; gap: 1px; }
+    .stat-value { font-weight: 600; font-size: 13px; color: var(--fg); }
+    .stat-label { color: var(--dim); font-size: 10px; }
+    .result-diagnosis {
+      padding: 7px 10px; font-size: 11px; color: var(--dim); line-height: 1.5;
+      border-bottom: 1px solid var(--border);
+    }
+    .result-diagnosis strong {
+      color: var(--fg); display: block; margin-bottom: 3px;
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .result-tickets { padding: 6px 10px; display: flex; flex-direction: column; gap: 4px; }
+    .result-ticket { font-size: 11px; display: flex; gap: 6px; align-items: baseline; }
+    .result-ticket-id { color: var(--dim); min-width: 60px; font-size: 10px; }
+    .result-ticket-desc { color: var(--fg); }
+
+    /* ── Composer ───────────────────────────────────────────── */
+    #prompt-wrap { position: relative; }
+    #prompt {
+      width: 100%; background: var(--input-bg); color: var(--input-fg);
+      border: 1px solid var(--input-border); border-radius: 4px;
+      padding: 7px 36px 7px 10px; font-family: inherit; font-size: 13px;
+      resize: none; min-height: 38px; max-height: 120px; line-height: 1.4;
+      overflow-y: auto; outline: none;
+    }
+    #prompt:focus { border-color: var(--accent); }
+    #prompt::placeholder { color: var(--dim); }
+
+    #send-btn {
+      position: absolute; right: 6px; bottom: 6px;
+      background: var(--btn-bg); color: var(--btn-fg); border: none; border-radius: 3px;
+      width: 24px; height: 24px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; transition: background 0.1s;
+    }
+    #send-btn:hover:not(:disabled) { background: var(--btn-hover); }
+    #send-btn:disabled { opacity: 0.4; cursor: default; }
+
+    .composer-row { display: flex; align-items: center; gap: 8px; }
+    #dry-run-label {
+      display: flex; align-items: center; gap: 4px; font-size: 11px;
+      color: var(--dim); cursor: pointer; user-select: none;
+    }
+    #dry-run-label input { cursor: pointer; }
+    #cancel-btn {
+      background: none; border: 1px solid var(--border); color: var(--dim);
+      border-radius: 3px; font-size: 11px; padding: 2px 8px; cursor: pointer; display: none;
+    }
+    #cancel-btn:hover { color: var(--fg); border-color: var(--fg); }
+    #cancel-btn.visible { display: block; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="history">
+      <div id="empty-state">
+        <div class="logo">⚙</div>
+        <strong>Turbine</strong>
+        <span>Describe a change below and press Enter</span>
+      </div>
+    </div>
+
+    <div id="composer">
+      <div id="prompt-wrap">
+        <textarea id="prompt" rows="1" placeholder="Describe a change…"></textarea>
+        <button id="send-btn" title="Run (Enter)">↑</button>
+      </div>
+      <div class="composer-row">
+        <label id="dry-run-label">
+          <input type="checkbox" id="dry-run-check" />
+          Dry run
+        </label>
+        <button id="cancel-btn">■ Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script nonce="{{NONCE}}">
+    const vscode = acquireVsCodeApi();
+
+    const STATUS_ICON = {
+      pending: "○", running: "◌", approved: "✓",
+      conflict: "⚡", failed: "✗", repair: "↺"
+    };
+
+    // ── DOM refs ──────────────────────────────────────────────
+    const history    = document.getElementById("history");
+    const emptyState = document.getElementById("empty-state");
+    const prompt     = document.getElementById("prompt");
+    const sendBtn    = document.getElementById("send-btn");
+    const cancelBtn  = document.getElementById("cancel-btn");
+    const dryRunChk  = document.getElementById("dry-run-check");
+
+    // ── State ─────────────────────────────────────────────────
+    let activeRun = null;
+    let running   = false;
+
+    // ── Composer ──────────────────────────────────────────────
+    function submit() {
+      const text = prompt.value.trim();
+      if (!text || running) { return; }
+      vscode.postMessage({ command: "run", request: text, dryRun: dryRunChk.checked });
+      prompt.value = "";
+      autoResize();
+    }
+
+    sendBtn.addEventListener("click", submit);
+    prompt.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+    });
+    prompt.addEventListener("input", autoResize);
+    function autoResize() {
+      prompt.style.height = "auto";
+      prompt.style.height = Math.min(prompt.scrollHeight, 120) + "px";
+    }
+    cancelBtn.addEventListener("click", () => vscode.postMessage({ command: "cancel" }));
+
+    // ── Escape HTML ───────────────────────────────────────────
+    function esc(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    // ── Create run block ──────────────────────────────────────
+    function createRunBlock(request, dryRun) {
+      emptyState.style.display = "none";
+
+      const block = document.createElement("div");
+      block.className = "run-block";
+
+      // Header
+      const header = document.createElement("div");
+      header.className = "run-header";
+      const promptEl = document.createElement("div");
+      promptEl.className = "run-prompt";
+      promptEl.textContent = request;
+      const meta = document.createElement("div");
+      meta.className = "run-meta";
+      meta.textContent = new Date().toLocaleTimeString();
+      header.appendChild(promptEl);
+      if (dryRun) {
+        const badge = document.createElement("span");
+        badge.className = "run-badge";
+        badge.textContent = "dry-run";
+        header.appendChild(badge);
+      }
+      header.appendChild(meta);
+      block.appendChild(header);
+
+      // Step cards container
+      const stepCardsEl = document.createElement("div");
+      stepCardsEl.className = "step-cards";
+      block.appendChild(stepCardsEl);
+
+      // Status footer
+      const statusEl = document.createElement("div");
+      statusEl.className = "run-status running";
+      statusEl.textContent = "Running…";
+      block.appendChild(statusEl);
+
+      history.appendChild(block);
+      history.scrollTop = history.scrollHeight;
+
+      // Ticker: update elapsed time on running workers
+      const ticker = setInterval(() => {
+        if (!running || !activeRun) { clearInterval(ticker); return; }
+        const workerStep = activeRun.workerStepName && activeRun.stepCards[activeRun.workerStepName];
+        if (!workerStep?.workerTbody) { return; }
+        let anyRunning = false;
+        for (const w of Object.values(activeRun.workers)) {
+          if (w.status === "running") {
+            w.elapsed = (Date.now() - w.startTs) / 1000;
+            anyRunning = true;
+          }
+        }
+        if (anyRunning) {
+          renderWorkers(activeRun.workers, workerStep.workerTbody);
+        }
+        // Update step live summary with worker counts
+        const ws  = Object.values(activeRun.workers);
+        const done = ws.filter(w => w.status === "approved" || w.status === "failed").length;
+        const total = ws.length;
+        if (total > 0 && activeRun.currentStepName === activeRun.workerStepName) {
+          workerStep.liveEl.textContent = `${done}/${total} workers complete`;
+        }
+      }, 500);
+
+      activeRun = {
+        workers: {},
+        stepCards: {},
+        currentStepName: null,
+        workerStepName: null,   // which step owns the workers table
+        preStepLogs: [],        // buffered before first step event
+        stepCardsEl,
+        statusEl,
+        startTime: Date.now(),
+        ticker,
+      };
+    }
+
+    // ── Step card management ──────────────────────────────────
+    function getOrCreateStepCard(stepName) {
+      if (activeRun.stepCards[stepName]) { return activeRun.stepCards[stepName]; }
+
+      const card = document.createElement("div");
+      card.className = "step-card";
+
+      // Header row
+      const hdr = document.createElement("div");
+      hdr.className = "step-card-header";
+
+      const iconEl  = document.createElement("span"); iconEl.className  = "step-icon";  iconEl.textContent  = "○";
+      const nameEl  = document.createElement("span"); nameEl.className  = "step-name";  nameEl.textContent  = stepName;
+      const liveEl  = document.createElement("span"); liveEl.className  = "step-live";
+      const countEl = document.createElement("span"); countEl.className = "step-count"; countEl.style.display = "none";
+      const arrowEl = document.createElement("span"); arrowEl.className = "step-arrow"; arrowEl.textContent = "▶";
+
+      hdr.appendChild(iconEl);
+      hdr.appendChild(nameEl);
+      hdr.appendChild(liveEl);
+      hdr.appendChild(countEl);
+      hdr.appendChild(arrowEl);
+
+      // Expandable body
+      const bodyEl = document.createElement("div");
+      bodyEl.className = "step-card-body";
+      bodyEl.style.display = "none";
+
+      const logsEl = document.createElement("div");
+      logsEl.className = "step-logs";
+      bodyEl.appendChild(logsEl);
+
+      hdr.addEventListener("click", () => {
+        const open = bodyEl.style.display !== "none";
+        bodyEl.style.display = open ? "none" : "";
+        arrowEl.style.transform = open ? "" : "rotate(90deg)";
+      });
+
+      card.appendChild(hdr);
+      card.appendChild(bodyEl);
+      activeRun.stepCardsEl.appendChild(card);
+
+      const obj = { el: card, iconEl, liveEl, countEl, arrowEl, bodyEl, logsEl,
+                    logCount: 0, workerTbody: null, workersSection: null };
+      activeRun.stepCards[stepName] = obj;
+      return obj;
+    }
+
+    function activateStep(stepName, message) {
+      if (!activeRun) { return; }
+
+      // Close the previous active step card
+      if (activeRun.currentStepName) {
+        const prev = activeRun.stepCards[activeRun.currentStepName];
+        if (prev) {
+          prev.el.classList.remove("step-active");
+          prev.el.classList.add("step-done");
+          prev.iconEl.textContent = "✓";
+          prev.bodyEl.style.display = "none";
+          prev.arrowEl.style.transform = "";
+        }
+      }
+
+      const step = getOrCreateStepCard(stepName);
+      step.el.classList.add("step-active");
+      step.el.classList.remove("step-done", "step-error");
+      step.iconEl.textContent = "◌";
+      if (message) { step.liveEl.textContent = message; }
+
+      // Auto-expand the new active step
+      step.bodyEl.style.display = "";
+      step.arrowEl.style.transform = "rotate(90deg)";
+
+      // Flush any buffered pre-step logs into this first step
+      for (const [cls, text] of activeRun.preStepLogs) {
+        _addLogLine(step, cls, text, false);
+      }
+      activeRun.preStepLogs = [];
+
+      activeRun.currentStepName = stepName;
+      history.scrollTop = history.scrollHeight;
+    }
+
+    // ── Workers ───────────────────────────────────────────────
+    function ensureWorkersSection() {
+      if (!activeRun?.currentStepName) { return null; }
+      const step = activeRun.stepCards[activeRun.currentStepName];
+      if (!step) { return null; }
+      if (step.workersSection) { return step; }
+
+      const section = document.createElement("div");
+      section.className = "step-workers";
+
+      const table = document.createElement("table");
+      table.className = "worker-table";
+      table.innerHTML = `<thead><tr>
+        <th>Worker</th><th>Status</th>
+        <th style="text-align:right">Attempt</th>
+        <th style="text-align:right">Elapsed</th>
+        <th>Description</th>
+      </tr></thead>`;
+      const tbody = document.createElement("tbody");
+      table.appendChild(tbody);
+      section.appendChild(table);
+
+      // Insert before the logs div
+      step.bodyEl.insertBefore(section, step.logsEl);
+      step.workersSection = section;
+      step.workerTbody = tbody;
+      activeRun.workerStepName = activeRun.currentStepName;
+      return step;
+    }
+
+    function renderWorkers(workers, tbody) {
+      tbody.innerHTML = "";
+      for (const [id, w] of Object.entries(workers)) {
+        const elapsed = w.status === "running"
+          ? ((Date.now() - w.startTs) / 1000).toFixed(1) + "s"
+          : w.elapsed ? w.elapsed.toFixed(1) + "s" : "—";
+        const desc = w.description.length > 48
+          ? w.description.slice(0, 48) + "…" : w.description;
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${esc(id)}</td>
+          <td class="status-${esc(w.status)}">${STATUS_ICON[w.status] || ""} ${esc(w.status)}</td>
+          <td style="text-align:right">${esc(w.attempt || "—")}</td>
+          <td style="text-align:right">${esc(elapsed)}</td>
+          <td>${esc(desc)}${w.detail
+            ? `<div class="worker-detail">${esc(w.detail.slice(0, 50))}</div>` : ""}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    // ── Logging ───────────────────────────────────────────────
+    function _addLogLine(step, cls, text, updateSummary) {
+      const line = document.createElement("div");
+      line.className = `log-line ${cls}`;
+      line.textContent = text;
+      step.logsEl.appendChild(line);
+
+      step.logCount++;
+      step.countEl.textContent = step.logCount === 1 ? "1 line" : `${step.logCount} lines`;
+      step.countEl.style.display = "";
+
+      if (step.bodyEl.style.display !== "none") {
+        step.logsEl.scrollTop = step.logsEl.scrollHeight;
+      }
+
+      // Update the one-line summary from action-level messages
+      if (updateSummary && cls === "log-action") {
+        const clean = text.replace(/^\S+\s+/, "").slice(0, 60);
+        step.liveEl.textContent = clean + (clean.length >= 60 ? "…" : "");
+      }
+    }
+
+    function appendLog(cls, text) {
+      if (!activeRun) { return; }
+      const stepName = activeRun.currentStepName;
+      if (!stepName) {
+        // Buffer non-debug pre-step logs for the first step
+        if (cls !== "log-debug") { activeRun.preStepLogs.push([cls, text]); }
+        return;
+      }
+      const step = activeRun.stepCards[stepName];
+      if (!step) { return; }
+      _addLogLine(step, cls, text, true);
+      history.scrollTop = history.scrollHeight;
+    }
+
+    // ── Result card ───────────────────────────────────────────
+    function renderResultCard(ev) {
+      if (!activeRun) { return; }
+      const isDry = ev.dry_run;
+      const allOk = ev.workers_succeeded === ev.workers_total;
+
+      const card = document.createElement("div");
+      card.className = "result-card";
+
+      const hdr = document.createElement("div");
+      hdr.className = "result-card-header" + (isDry ? " dry-run" : "");
+      hdr.textContent = isDry
+        ? "⚠ Dry run complete — no files written"
+        : allOk
+          ? `✓ ${ev.workers_succeeded} worker${ev.workers_succeeded !== 1 ? "s" : ""} succeeded`
+          : `⚠ ${ev.workers_succeeded}/${ev.workers_total} workers succeeded`;
+      card.appendChild(hdr);
+
+      const stats = document.createElement("div");
+      stats.className = "result-stats";
+      const addStat = (value, label) => {
+        const s = document.createElement("div");
+        s.className = "stat";
+        s.innerHTML = `<span class="stat-value">${esc(String(value))}</span>`
+                    + `<span class="stat-label">${esc(label)}</span>`;
+        stats.appendChild(s);
+      };
+      addStat(ev.workers_succeeded + "/" + ev.workers_total, "workers");
+      addStat(ev.files_written, isDry ? "files (staged)" : "files written");
+      addStat(ev.diff_lines, "diff lines");
+      addStat(ev.tickets ? ev.tickets.length : 0, "tickets");
+      card.appendChild(stats);
+
+      if (ev.diagnosis) {
+        const diag = document.createElement("div");
+        diag.className = "result-diagnosis";
+        diag.innerHTML = `<strong>Diagnosis</strong>${esc(ev.diagnosis)}`;
+        card.appendChild(diag);
+      }
+
+      if (ev.tickets && ev.tickets.length > 0) {
+        const ticketsEl = document.createElement("div");
+        ticketsEl.className = "result-tickets";
+        for (const t of ev.tickets) {
+          const row = document.createElement("div");
+          row.className = "result-ticket";
+          const desc = t.description.length > 80
+            ? t.description.slice(0, 80) + "…" : t.description;
+          row.innerHTML = `<span class="result-ticket-id">${esc(t.id)}</span>`
+                        + `<span class="result-ticket-desc">${esc(desc)}</span>`;
+          ticketsEl.appendChild(row);
+        }
+        card.appendChild(ticketsEl);
+      }
+
+      activeRun.statusEl.parentNode.insertBefore(card, activeRun.statusEl);
+      history.scrollTop = history.scrollHeight;
+    }
+
+    function setRunning(isRunning) {
+      running = isRunning;
+      sendBtn.disabled = isRunning;
+      cancelBtn.classList.toggle("visible", isRunning);
+    }
+
+    // ── Message handler ───────────────────────────────────────
+    window.addEventListener("message", (e) => {
+      const ev = e.data;
+
+      switch (ev.event) {
+
+        case "_turbine_start":
+          setRunning(true);
+          createRunBlock(ev.request, ev.dryRun);
+          break;
+
+        // Each step gets its own collapsible card
+        case "step":
+          activateStep(ev.step, ev.message);
+          break;
+
+        case "worker_start": {
+          if (!activeRun) { break; }
+          activeRun.workers[ev.ticket_id] = {
+            description: ev.description, status: "running",
+            attempt: 0, startTs: Date.now(), elapsed: 0, detail: ""
+          };
+          const step = ensureWorkersSection();
+          if (step?.workerTbody) { renderWorkers(activeRun.workers, step.workerTbody); }
+          appendLog("log-thinking", `${ev.ticket_id}  ${ev.description}`);
+          break;
+        }
+
+        case "worker_attempt": {
+          if (!activeRun?.workers[ev.ticket_id]) { break; }
+          activeRun.workers[ev.ticket_id].attempt = ev.attempt;
+          const ws = activeRun.workerStepName && activeRun.stepCards[activeRun.workerStepName];
+          if (ws?.workerTbody) { renderWorkers(activeRun.workers, ws.workerTbody); }
+          break;
+        }
+
+        case "worker_conflict": {
+          if (!activeRun?.workers[ev.ticket_id]) { break; }
+          activeRun.workers[ev.ticket_id].status = "conflict";
+          activeRun.workers[ev.ticket_id].detail = ev.detail || "";
+          const ws = activeRun.workerStepName && activeRun.stepCards[activeRun.workerStepName];
+          if (ws?.workerTbody) { renderWorkers(activeRun.workers, ws.workerTbody); }
+          appendLog("log-error", `${ev.ticket_id} ⚡ conflict${ev.detail ? " — " + ev.detail : ""}`);
+          break;
+        }
+
+        case "worker_done": {
+          const w = activeRun?.workers[ev.ticket_id];
+          if (w) {
+            w.status  = ev.success ? "approved" : "failed";
+            w.elapsed = (Date.now() - w.startTs) / 1000;
+            w.detail  = ev.detail || "";
+            const ws = activeRun.workerStepName && activeRun.stepCards[activeRun.workerStepName];
+            if (ws?.workerTbody) { renderWorkers(activeRun.workers, ws.workerTbody); }
+          }
+          appendLog(
+            ev.success ? "log-action" : "log-error",
+            `${ev.ticket_id} ${ev.success ? "✓ approved" : "✗ failed"}${ev.detail ? " — " + ev.detail : ""}`
+          );
+          break;
+        }
+
+        case "worker_repair": {
+          if (!activeRun?.workers[ev.ticket_id]) { break; }
+          activeRun.workers[ev.ticket_id].status = "repair";
+          const ws = activeRun.workerStepName && activeRun.stepCards[activeRun.workerStepName];
+          if (ws?.workerTbody) { renderWorkers(activeRun.workers, ws.workerTbody); }
+          appendLog("log-error", `${ev.ticket_id} ↺ repair needed`);
+          break;
+        }
+
+        case "done": {
+          if (!activeRun) { break; }
+          // Close the last step card
+          if (activeRun.currentStepName) {
+            const step = activeRun.stepCards[activeRun.currentStepName];
+            if (step) {
+              step.el.classList.remove("step-active");
+              step.el.classList.add("step-done");
+              step.iconEl.textContent = "✓";
+              step.bodyEl.style.display = "none";
+              step.arrowEl.style.transform = "";
+              if (ev.summary) { step.liveEl.textContent = ev.summary; }
+            }
+            activeRun.currentStepName = null;
+          }
+          activeRun.statusEl.className = "run-status done";
+          activeRun.statusEl.textContent = ev.summary || "Done";
+          break;
+        }
+
+        case "done_detail":
+          renderResultCard(ev);
+          break;
+
+        case "log":
+          appendLog(`log-${ev.level || "debug"}`, ev.message);
+          break;
+
+        case "_turbine_exit":
+          setRunning(false);
+          if (activeRun) {
+            clearInterval(activeRun.ticker);
+            if (ev.code !== 0 && activeRun.statusEl.className !== "run-status done") {
+              activeRun.statusEl.className = "run-status error";
+              activeRun.statusEl.textContent = `Exited with code ${ev.code}`;
+              if (activeRun.currentStepName) {
+                const step = activeRun.stepCards[activeRun.currentStepName];
+                if (step) {
+                  step.el.classList.remove("step-active");
+                  step.el.classList.add("step-error");
+                  step.iconEl.textContent = "✗";
+                }
+              }
+            }
+            activeRun = null;
+          }
+          break;
+
+        case "_turbine_cancel":
+          appendLog("log-error", "Cancelled by user.");
+          break;
+      }
+    });
+  </script>
+</body>
+</html>

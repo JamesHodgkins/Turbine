@@ -7,7 +7,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# Force UTF-8 stdout/stderr so Rich unicode characters don't crash on Windows
+# when the process is spawned without a console (e.g. from VS Code extension).
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from turbine.commit_engine import CommitEngine
+from turbine.json_ui import JsonEventUI
 from turbine.logger import TurbineLogger
 from turbine.manager import Manager
 from turbine.tree_mapper import TreeMapper
@@ -23,6 +31,8 @@ async def run(
     dry_run: bool = False,
     review: bool = False,
     no_ui: bool = False,
+    json_events: bool = False,
+    verbose: bool = False,
 ) -> None:
     log = TurbineLogger()
     api_key = os.getenv("MISTRAL_API_KEY")
@@ -36,8 +46,12 @@ async def run(
     log.action(f"Tree mapped — {len(tree.files)} files found.")
     log.debug(tree.summary())
 
-    ui_enabled = not no_ui and sys.stdout.isatty()
-    ui = TurbineUI(title=target, enabled=ui_enabled)
+    # --json-events: use structured JSON emitter; otherwise use Rich dashboard
+    if json_events:
+        ui: TurbineUI | JsonEventUI = JsonEventUI()
+    else:
+        ui_enabled = not no_ui and sys.stdout.isatty()
+        ui = TurbineUI(title=target, enabled=ui_enabled)
 
     # Steps 2–5: Preprocess → Investigate → Delegate → Commit & Verify
     # When --review is set we defer the actual disk write to after the gate,
@@ -52,6 +66,7 @@ async def run(
         test_commands=[] if review else (test_commands or []),
         dry_run=effective_dry_run,
         ui=ui,
+        verbose=verbose,
     )
 
     with ui:
@@ -115,6 +130,14 @@ def main() -> None:
         "--no-ui", action="store_true",
         help="Disable the rich live dashboard",
     )
+    parser.add_argument(
+        "--json-events", action="store_true", dest="json_events",
+        help="Emit newline-delimited JSON events instead of the Rich dashboard (for IDE integrations)",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Print LLM responses and extra reasoning detail",
+    )
     args = parser.parse_args()
 
     asyncio.run(run(
@@ -124,6 +147,8 @@ def main() -> None:
         args.dry_run,
         args.review,
         args.no_ui,
+        args.json_events,
+        args.verbose,
     ))
 
 
