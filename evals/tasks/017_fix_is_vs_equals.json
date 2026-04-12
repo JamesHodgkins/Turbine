@@ -1,0 +1,16 @@
+{
+  "id": "task-017",
+  "description": "Replace `is` string comparisons with == in status_checker.py",
+  "category": "multi-file-complex",
+  "request": "The function check_status compares string values using `is` instead of `==`. This is semantically wrong and unreliable. Replace every string identity comparison with an equality comparison.",
+  "snapshot": {
+    "status_checker.py": "def check_status(status):\n    \"\"\"Map a status string to a display label.\"\"\"\n    if status is 'active':\n        return 'running'\n    elif status is 'inactive':\n        return 'stopped'\n    elif status is 'pending':\n        return 'waiting'\n    return 'unknown'\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "status_checker.py"},
+    {"type": "content_not_contains", "file": "status_checker.py", "pattern": " is '"},
+    {"type": "content_contains",     "file": "status_checker.py", "pattern": "=="},
+    {"type": "valid_python",         "file": "status_checker.py"}
+  ],
+  "test_commands": []
+}

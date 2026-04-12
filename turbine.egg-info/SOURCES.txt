@@ -2,6 +2,8 @@ LICENSE
 README.md
 pyproject.toml
 tests/test_commit_engine.py
+tests/test_eval_runner.py
+tests/test_git_integration.py
 tests/test_manager.py
 tests/test_test_runner.py
 tests/test_token_manager.py
@@ -12,6 +14,8 @@ tests/test_worker.py
 turbine/__init__.py
 turbine/__main__.py
 turbine/commit_engine.py
+turbine/eval_runner.py
+turbine/git_integration.py
 turbine/json_ui.py
 turbine/logger.py
 turbine/main.py

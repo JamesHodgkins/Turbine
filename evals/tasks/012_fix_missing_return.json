@@ -1,0 +1,17 @@
+{
+  "id": "task-012",
+  "description": "Fix format_name to actually return the formatted string",
+  "category": "bug-fix-with-tests",
+  "request": "The function format_name builds a formatted string but never returns it, so callers always receive None. Add the missing return statement.",
+  "snapshot": {
+    "formatter.py": "def format_name(first, last):\n    \"\"\"Return 'Last, First' formatted name.\"\"\"\n    name = last + ', ' + first\n",
+    "test_formatter.py": "from formatter import format_name\n\ndef test_format_name():\n    result = format_name('John', 'Smith')\n    assert result is not None, 'format_name returned None'\n    assert result == 'Smith, John'\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "formatter.py"},
+    {"type": "content_contains", "file": "formatter.py", "pattern": "return"},
+    {"type": "valid_python",     "file": "formatter.py"},
+    {"type": "tests_pass",       "command": "python -m pytest test_formatter.py -x -q --tb=short"}
+  ],
+  "test_commands": []
+}

@@ -1,0 +1,17 @@
+{
+  "id": "task-007",
+  "description": "Fix parse_count to return int instead of raw string",
+  "category": "multi-file-refactor",
+  "request": "The function parse_count in parser.py is supposed to return an integer but currently returns the raw string value unchanged. Fix it to convert the value to int before returning.",
+  "snapshot": {
+    "parser.py": "def parse_count(value):\n    \"\"\"Parse a count value from a string input and return it as an int.\"\"\"\n    return value\n",
+    "processor.py": "from parser import parse_count\n\ndef double_count(raw):\n    \"\"\"Return twice the parsed count.\"\"\"\n    count = parse_count(raw)\n    return count * 2\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "parser.py"},
+    {"type": "content_contains", "file": "parser.py", "pattern": "int\\("},
+    {"type": "valid_python",     "file": "parser.py"},
+    {"type": "valid_python",     "file": "processor.py"}
+  ],
+  "test_commands": []
+}

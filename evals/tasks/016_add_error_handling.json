@@ -1,0 +1,15 @@
+{
+  "id": "task-016",
+  "description": "Wrap file read in try/except to handle missing files gracefully",
+  "category": "multi-file-complex",
+  "request": "The function load_file crashes with FileNotFoundError when the path does not exist. Wrap the file read in a try/except block and return None if the file is missing.",
+  "snapshot": {
+    "file_loader.py": "def load_file(path):\n    \"\"\"Load and return the text contents of a file, or None if missing.\"\"\"\n    with open(path) as f:\n        return f.read()\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "file_loader.py"},
+    {"type": "content_contains", "file": "file_loader.py", "pattern": "try|except|FileNotFoundError|OSError"},
+    {"type": "valid_python",     "file": "file_loader.py"}
+  ],
+  "test_commands": []
+}

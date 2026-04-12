@@ -1,4 +1,4 @@
-"""Tests for turbine.git_integration — Phase 7."""
+"""Tests for turbine.git_integration — Phase 7 / Phase 22."""
 
 from __future__ import annotations
 
@@ -58,6 +58,31 @@ class TestIsRepo:
         _init_repo(tmp_path)
         gi = GitIntegration(tmp_path)
         assert gi.is_repo is True
+
+    def test_subdirectory_of_repo_is_not_is_repo(self, tmp_path: Path):
+        """A subdirectory inside a git repo should NOT be treated as a repo root."""
+        _init_repo(tmp_path)
+        subdir = tmp_path / "my_project"
+        subdir.mkdir()
+        gi = GitIntegration(subdir)
+        assert gi.is_repo is False
+
+    def test_subdirectory_sets_is_subdir_of_repo(self, tmp_path: Path):
+        """The subdir flag must be set so callers can emit a diagnostic."""
+        _init_repo(tmp_path)
+        subdir = tmp_path / "my_project"
+        subdir.mkdir()
+        gi = GitIntegration(subdir)
+        assert gi.is_subdir_of_repo is True
+
+    def test_repo_root_does_not_set_is_subdir_of_repo(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        gi = GitIntegration(tmp_path)
+        assert gi.is_subdir_of_repo is False
+
+    def test_non_repo_does_not_set_is_subdir_of_repo(self, tmp_path: Path):
+        gi = GitIntegration(tmp_path)
+        assert gi.is_subdir_of_repo is False
 
 
 # ---------------------------------------------------------------------------
@@ -279,3 +304,217 @@ class TestBuildCommitMessage:
         msg = build_commit_message("", [], "")
         # Should not have a trailing blank line from an empty body
         assert msg.strip() == "turbine: automated repair"
+
+
+# ---------------------------------------------------------------------------
+# Phase 22 — Lock file
+# ---------------------------------------------------------------------------
+
+class TestLockFile:
+    def test_acquire_creates_lock_file(self, tmp_path: Path):
+        gi = GitIntegration(tmp_path)
+        gi.acquire_lock()
+        assert (tmp_path / ".turbine.lock").exists()
+        gi.release_lock()
+
+    def test_lock_file_contains_pid(self, tmp_path: Path):
+        import os
+        gi = GitIntegration(tmp_path)
+        gi.acquire_lock()
+        content = (tmp_path / ".turbine.lock").read_text().strip()
+        assert content == str(os.getpid())
+        gi.release_lock()
+
+    def test_second_acquire_raises(self, tmp_path: Path):
+        gi1 = GitIntegration(tmp_path)
+        gi1.acquire_lock()
+        gi2 = GitIntegration(tmp_path)
+        with pytest.raises(RuntimeError, match=r"\.turbine\.lock"):
+            gi2.acquire_lock()
+        gi1.release_lock()
+
+    def test_release_removes_lock_file(self, tmp_path: Path):
+        gi = GitIntegration(tmp_path)
+        gi.acquire_lock()
+        gi.release_lock()
+        assert not (tmp_path / ".turbine.lock").exists()
+
+    def test_release_is_idempotent(self, tmp_path: Path):
+        gi = GitIntegration(tmp_path)
+        gi.release_lock()  # no-op when no lock exists — must not raise
+
+    def test_acquire_works_in_non_repo(self, tmp_path: Path):
+        """Lock must work regardless of whether the target is a git repo."""
+        gi = GitIntegration(tmp_path)
+        assert gi.is_repo is False
+        gi.acquire_lock()
+        assert (tmp_path / ".turbine.lock").exists()
+        gi.release_lock()
+
+
+# ---------------------------------------------------------------------------
+# Phase 22 — chat_id branch creation and resume
+# ---------------------------------------------------------------------------
+
+class TestChatIdBranching:
+    def test_chat_id_creates_named_branch(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        gi = GitIntegration(tmp_path, chat_id="abc123")
+        branch = gi.create_branch()
+        assert branch == "turbine/chat-abc123"
+        assert gi.branch == branch
+        assert gi.resumed is False
+        result = _git("branch", "--list", branch, cwd=tmp_path)
+        assert branch in result.stdout
+
+    def test_chat_id_resumes_on_clean_tree(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        # Create the branch first
+        gi1 = GitIntegration(tmp_path, chat_id="sess1")
+        gi1.create_branch()
+        # Return to main/master so we can test resume
+        _git("checkout", "-", cwd=tmp_path)
+
+        gi2 = GitIntegration(tmp_path, chat_id="sess1")
+        preflight = gi2.preflight()
+        assert preflight.is_clean
+        branch = gi2.create_branch(preflight=preflight)
+        assert branch == "turbine/chat-sess1"
+        assert gi2.resumed is True
+
+    def test_chat_id_skips_resume_on_dirty_tree(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        # Create the branch first
+        gi1 = GitIntegration(tmp_path, chat_id="sess2")
+        gi1.create_branch()
+        _git("checkout", "-", cwd=tmp_path)
+
+        # Dirty the tree
+        _dirty(tmp_path, "manual_edit.py")
+
+        gi2 = GitIntegration(tmp_path, chat_id="sess2")
+        preflight = gi2.preflight()
+        assert not preflight.is_clean
+
+        # With dirty tree, create_branch must fail because
+        # turbine/chat-sess2 already exists — the caller should
+        # handle this (e.g. by appending a suffix); for now we
+        # confirm it does NOT resume (i.e. RuntimeError is raised
+        # when trying to create a branch that already exists)
+        with pytest.raises(RuntimeError):
+            gi2.create_branch(preflight=preflight)
+
+    def test_no_chat_id_still_uses_timestamp(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        gi = GitIntegration(tmp_path)
+        branch = gi.create_branch(timestamp="20240101-120000")
+        assert branch == "turbine/run-20240101-120000"
+        assert gi.resumed is False
+
+    def test_resumed_false_on_new_branch(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        gi = GitIntegration(tmp_path, chat_id="newid")
+        gi.create_branch()
+        assert gi.resumed is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 21 — --new-chat isolation
+# ---------------------------------------------------------------------------
+
+class TestNewChat:
+    def test_new_chat_creates_unique_branch(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        gi = GitIntegration(tmp_path, chat_id="uniqueid", new_chat=True)
+        branch = gi.create_branch()
+        assert branch == "turbine/chat-uniqueid"
+        assert gi.resumed is False
+
+    def test_new_chat_returns_to_base_when_on_turbine_branch(self, tmp_path: Path):
+        """new_chat=True must ensure the new branch starts from the base branch,
+        removing turbine-committed files from disk."""
+        _init_repo(tmp_path)
+        # Create and switch to a prior turbine branch
+        gi_old = GitIntegration(tmp_path, chat_id="old")
+        gi_old.create_branch()
+        # Confirm we are now on a turbine branch
+        result = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=tmp_path)
+        assert result.stdout.strip().startswith("turbine/")
+
+        # New chat — should return to base branch before creating new branch
+        gi_new = GitIntegration(tmp_path, chat_id="fresh", new_chat=True)
+        branch = gi_new.create_branch()
+        assert branch == "turbine/chat-fresh"
+        # original_branch is the base (main/master) — disk reset to clean state
+        assert gi_new._original_branch in ("main", "master")
+        # disk_changed flag must be set so manager re-maps the tree
+        assert gi_new.disk_changed is True
+
+    def test_new_chat_stays_on_base_when_already_there(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        # Already on the base branch — create_branch should work normally
+        gi = GitIntegration(tmp_path, chat_id="abc", new_chat=True)
+        branch = gi.create_branch()
+        assert branch == "turbine/chat-abc"
+
+
+# ---------------------------------------------------------------------------
+# Phase 21 — purge_history
+# ---------------------------------------------------------------------------
+
+class TestPurgeHistory:
+    def test_purge_no_turbine_branches(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        gi = GitIntegration(tmp_path)
+        deleted = gi.purge_history()
+        assert deleted == []
+
+    def test_purge_deletes_all_turbine_branches(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        # Create two turbine branches
+        _git("checkout", "-b", "turbine/chat-aaa", cwd=tmp_path)
+        _git("checkout", "-", cwd=tmp_path)
+        _git("checkout", "-b", "turbine/run-20240101-120000", cwd=tmp_path)
+        _git("checkout", "-", cwd=tmp_path)
+
+        gi = GitIntegration(tmp_path)
+        deleted = gi.purge_history()
+        assert len(deleted) == 2
+        assert "turbine/chat-aaa" in deleted
+        assert "turbine/run-20240101-120000" in deleted
+
+        # Confirm branches are gone
+        remaining = _git("branch", "--list", "turbine/*", cwd=tmp_path)
+        assert remaining.stdout.strip() == ""
+
+    def test_purge_leaves_non_turbine_branches(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        _git("checkout", "-b", "feature/my-feature", cwd=tmp_path)
+        _git("checkout", "-", cwd=tmp_path)
+        _git("checkout", "-b", "turbine/run-ts", cwd=tmp_path)
+        _git("checkout", "-", cwd=tmp_path)
+
+        gi = GitIntegration(tmp_path)
+        deleted = gi.purge_history()
+        assert deleted == ["turbine/run-ts"]
+
+        remaining = _git("branch", "--list", "feature/*", cwd=tmp_path)
+        assert "feature/my-feature" in remaining.stdout
+
+    def test_purge_switches_off_turbine_branch_first(self, tmp_path: Path):
+        _init_repo(tmp_path)
+        _git("checkout", "-b", "turbine/chat-xyz", cwd=tmp_path)
+        # We're now ON a turbine branch — purge must switch away first
+
+        gi = GitIntegration(tmp_path)
+        deleted = gi.purge_history()
+        assert "turbine/chat-xyz" in deleted
+
+        # Should be back on main/master, not on the deleted branch
+        current = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=tmp_path)
+        assert current.stdout.strip() in ("main", "master")
+
+    def test_purge_raises_when_not_a_repo(self, tmp_path: Path):
+        gi = GitIntegration(tmp_path)
+        with pytest.raises(RuntimeError, match="git repository"):
+            gi.purge_history()

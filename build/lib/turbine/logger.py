@@ -1,12 +1,9 @@
 """Turbine logger — tracks Thinking and Action phases."""
 
-from __future__ import annotations
-
 import logging
 import sys
 from datetime import datetime
 from enum import Enum
-from typing import Any
 
 from rich.console import Console
 from rich.text import Text
@@ -34,14 +31,13 @@ _console = Console(stderr=False, highlight=False, force_terminal=None)
 
 
 class TurbineLogger:
-    def __init__(self, name: str = "turbine", ui: Any = None):
+    def __init__(self, name: str = "turbine"):
         # Keep the stdlib logger for any existing code that reads log records,
         # but silence its handler — we print via Rich instead.
         self._log = logging.getLogger(name)
         if not self._log.handlers:
             self._log.addHandler(logging.NullHandler())
         self._log.setLevel(logging.DEBUG)
-        self._ui = ui
 
     # ------------------------------------------------------------------
     # Internal helper
@@ -52,12 +48,6 @@ class TurbineLogger:
         return datetime.now().strftime("%H:%M:%S")
 
     def _print(self, label: str, label_style: str, message: str) -> None:
-        message = message.replace("\n", " ").replace("\r", "")
-        # When a JsonEventUI is wired up, forward as a structured log event
-        # instead of printing to the terminal (which would corrupt the JSON stream).
-        if self._ui is not None:
-            self._ui.log(label.strip().lower(), message)
-            return
         line = Text()
         line.append(f"[{self._ts()}] ", style="dim")
         line.append(f"[{label}]", style=label_style)

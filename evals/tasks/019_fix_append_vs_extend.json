@@ -1,0 +1,15 @@
+{
+  "id": "task-019",
+  "description": "Fix collect_results to flatten batches instead of nesting them",
+  "category": "multi-file-complex",
+  "request": "The function collect_results is supposed to flatten a list of lists into a single flat list, but it uses append() which nests each batch as a sub-list. Fix it so the result is flat — using extend(), a list comprehension, or any equivalent approach.",
+  "snapshot": {
+    "aggregator.py": "def collect_results(batches):\n    \"\"\"Flatten a list of lists into a single combined list.\"\"\"\n    result = []\n    for batch in batches:\n        result.append(batch)\n    return result\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "aggregator.py"},
+    {"type": "content_not_contains", "file": "aggregator.py", "pattern": "\\.append\\(batch\\)"},
+    {"type": "valid_python",         "file": "aggregator.py"}
+  ],
+  "test_commands": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "task-008",
+  "description": "Add missing `import math` to stats.py",
+  "category": "multi-file-refactor",
+  "request": "The function std_dev in stats.py calls math.sqrt but the file is missing `import math`, causing a NameError at runtime. Add the missing import.",
+  "snapshot": {
+    "stats.py": "def mean(values):\n    \"\"\"Return the arithmetic mean of a list of numbers.\"\"\"\n    return sum(values) / len(values)\n\ndef std_dev(values):\n    \"\"\"Return the population standard deviation.\"\"\"\n    m = mean(values)\n    variance = sum((v - m) ** 2 for v in values) / len(values)\n    return math.sqrt(variance)\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "stats.py"},
+    {"type": "content_contains", "file": "stats.py", "pattern": "import math"},
+    {"type": "valid_python",     "file": "stats.py"}
+  ],
+  "test_commands": []
+}

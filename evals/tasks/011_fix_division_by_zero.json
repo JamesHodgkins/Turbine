@@ -1,0 +1,16 @@
+{
+  "id": "task-011",
+  "description": "Fix safe_divide to return None on zero divisor",
+  "category": "bug-fix-with-tests",
+  "request": "The function safe_divide raises ZeroDivisionError when b is 0. Fix it to return None instead of raising an exception.",
+  "snapshot": {
+    "math_ops.py": "def safe_divide(a, b):\n    \"\"\"Divide a by b, returning None if b is zero.\"\"\"\n    return a / b\n",
+    "test_math_ops.py": "from math_ops import safe_divide\n\ndef test_normal_division():\n    assert safe_divide(10, 2) == 5.0\n\ndef test_divide_by_zero_returns_none():\n    assert safe_divide(10, 0) is None\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "math_ops.py"},
+    {"type": "valid_python",     "file": "math_ops.py"},
+    {"type": "tests_pass",       "command": "python -m pytest test_math_ops.py -x -q --tb=short"}
+  ],
+  "test_commands": []
+}

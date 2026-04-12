@@ -1,0 +1,15 @@
+{
+  "id": "task-018",
+  "description": "Add .strip() to parse_tokens so whitespace around commas is ignored",
+  "category": "multi-file-complex",
+  "request": "The function parse_tokens splits on commas but does not strip whitespace from each token, so inputs like 'a, b, c' produce [' b', ' c'] with leading spaces. Fix it so every token is stripped of surrounding whitespace.",
+  "snapshot": {
+    "token_parser.py": "def parse_tokens(text):\n    \"\"\"Split a comma-separated string into a list of clean tokens.\"\"\"\n    return text.split(',')\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "token_parser.py"},
+    {"type": "content_contains", "file": "token_parser.py", "pattern": "\\.strip\\(\\)"},
+    {"type": "valid_python",     "file": "token_parser.py"}
+  ],
+  "test_commands": []
+}

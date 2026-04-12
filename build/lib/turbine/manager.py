@@ -238,7 +238,6 @@ class Manager:
         verbose: bool = False,
         git: "GitIntegration | None" = None,
         chat_id: str | None = None,
-        json_ui: Any = None,
     ) -> None:
         self.tree = tree
         self.user_request = user_request
@@ -251,8 +250,7 @@ class Manager:
         self.verbose = verbose
         self.chat_id = chat_id
         self.ui = ui or TurbineUI(enabled=False)   # no-op by default
-        self._json_ui = json_ui
-        self.log = TurbineLogger(ui=json_ui)
+        self.log = TurbineLogger()
         self.token_manager = TokenManager(model)
         self._client = Mistral(api_key=api_key or os.environ["MISTRAL_API_KEY"])
         self.vfs = VirtualFileSystem()
@@ -555,7 +553,6 @@ class Manager:
             file_locks=file_locks,
             ui=self.ui,
             verbose=self.verbose,
-            json_ui=self._json_ui,
         )
         return await worker.run()
 
@@ -687,7 +684,6 @@ class Manager:
                 file_locks=file_locks,
                 ui=self.ui,
                 verbose=self.verbose,
-                json_ui=self._json_ui,
             )
             # Inject test failure so the worker knows what to fix
             return await worker.run(repair_feedback=rt.failure_output)

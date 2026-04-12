@@ -1,0 +1,17 @@
+{
+  "id": "task-013",
+  "description": "Fix join_words to use a space separator instead of a comma",
+  "category": "bug-fix-with-tests",
+  "request": "The function join_words should join words with a single space, but it currently uses ', ' as the separator. Fix the separator so that join_words(['hello', 'world']) returns 'hello world'.",
+  "snapshot": {
+    "text_utils.py": "def join_words(words):\n    \"\"\"Join a list of words into a space-separated sentence.\"\"\"\n    return ', '.join(words)\n",
+    "test_text_utils.py": "from text_utils import join_words\n\ndef test_multiple_words():\n    assert join_words(['hello', 'world']) == 'hello world'\n\ndef test_single_word():\n    assert join_words(['one']) == 'one'\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "text_utils.py"},
+    {"type": "content_contains", "file": "text_utils.py", "pattern": "' '.join|\" \".join"},
+    {"type": "valid_python",     "file": "text_utils.py"},
+    {"type": "tests_pass",       "command": "python -m pytest test_text_utils.py -x -q --tb=short"}
+  ],
+  "test_commands": []
+}

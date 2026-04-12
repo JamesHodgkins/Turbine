@@ -70,9 +70,18 @@ class TurbineViewProvider implements vscode.WebviewViewProvider {
     // Handle messages from the WebView
     webviewView.webview.onDidReceiveMessage((msg: WebViewMessage) => {
       if (msg.command === "run") {
-        this._runTurbine(msg.request, msg.dryRun ?? false);
+        this._runTurbine(msg.request, msg.dryRun ?? false, msg.newChat ?? false);
       } else if (msg.command === "cancel") {
         this._cancel();
+      } else if (msg.command === "ready") {
+        // Webview finished loading — send persisted sessions so the dropdown can populate
+        const sessions = this._context.globalState.get<SessionRecord[]>("turbine.sessions", []);
+        this._post({ event: "_turbine_init", sessions });
+      } else if (msg.command === "saveSessions") {
+        const sessions = ((msg as unknown) as SaveSessionsMessage).sessions;
+        if (Array.isArray(sessions)) {
+          this._context.globalState.update("turbine.sessions", sessions.slice(0, 30));
+        }
       }
     });
   }
@@ -89,7 +98,7 @@ class TurbineViewProvider implements vscode.WebviewViewProvider {
       await vscode.commands.executeCommand(
         `${TurbineViewProvider.VIEW_ID}.focus`
       );
-      this._runTurbine(request, dryRun);
+      this._runTurbine(request, dryRun, false);
     }
   }
 
@@ -106,7 +115,7 @@ class TurbineViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async _runTurbine(request: string, dryRun: boolean): Promise<void> {
+  private async _runTurbine(request: string, dryRun: boolean, newChat: boolean): Promise<void> {
     const config = vscode.workspace.getConfiguration("turbine");
     const pythonPath: string = config.get("pythonPath", "");
     const extraArgs: string[] = config.get("extraArgs", []);
@@ -161,7 +170,23 @@ class TurbineViewProvider implements vscode.WebviewViewProvider {
       if (resolvedPython) {
         cmd = resolvedPython;
         baseArgs = ["-m", "turbine"];
-        target = resolvedRoot;
+        // resolvedRoot is where the .venv lives (Turbine's own dir) — use it
+        // only for the Python executable, NOT as the project target.
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) {
+          vscode.window.showErrorMessage("Turbine: No workspace folder is open.");
+          return;
+        }
+        if (folders.length === 1) {
+          target = folders[0].uri.fsPath;
+        } else {
+          const picked = await vscode.window.showQuickPick(
+            folders.map(f => ({ label: f.name, description: f.uri.fsPath, folder: f })),
+            { placeHolder: "Which folder should Turbine run on?" }
+          );
+          if (!picked) { return; }
+          target = picked.folder.uri.fsPath;
+        }
       } else {
         // Last resort: bare turbine on PATH, first workspace folder as target
         cmd = "turbine";
@@ -182,6 +207,7 @@ class TurbineViewProvider implements vscode.WebviewViewProvider {
       "--json-events",
       "--no-ui",
       ...(dryRun ? ["--dry-run"] : []),
+      ...(newChat ? ["--new-chat"] : []),
       ...extraArgs,
     ];
 
@@ -275,10 +301,36 @@ class TurbineViewProvider implements vscode.WebviewViewProvider {
 // Types / helpers
 // ---------------------------------------------------------------------------
 
+interface RunRecord {
+  id: string;
+  ts: number;
+  request: string;
+  dryRun: boolean;
+  workersSucceeded: number;
+  workersTotal: number;
+  filesWritten: number;
+  diffLines: number;
+  diagnosis: string;
+  tickets: { id: string; description: string }[];
+}
+
+interface SessionRecord {
+  id: string;
+  label: string;
+  ts: number;
+  runs: RunRecord[];
+}
+
 interface WebViewMessage {
-  command: "run" | "cancel";
+  command: "run" | "cancel" | "ready" | "saveSessions";
   request: string;
   dryRun?: boolean;
+  newChat?: boolean;
+}
+
+interface SaveSessionsMessage {
+  command: "saveSessions";
+  sessions: SessionRecord[];
 }
 
 function generateNonce(): string {

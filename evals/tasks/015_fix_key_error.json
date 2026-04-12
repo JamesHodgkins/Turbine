@@ -1,0 +1,17 @@
+{
+  "id": "task-015",
+  "description": "Fix get_config to return None for missing keys instead of raising KeyError",
+  "category": "bug-fix-with-tests",
+  "request": "The function get_config raises KeyError when the requested key does not exist in CONFIG. Change it to return None for missing keys using dict.get().",
+  "snapshot": {
+    "config.py": "CONFIG = {'host': 'localhost', 'port': 5432}\n\ndef get_config(key):\n    \"\"\"Return the config value for key, or None if not found.\"\"\"\n    return CONFIG[key]\n",
+    "test_config.py": "from config import get_config\n\ndef test_existing_key():\n    assert get_config('host') == 'localhost'\n\ndef test_missing_key_returns_none():\n    assert get_config('timeout') is None\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "config.py"},
+    {"type": "content_contains", "file": "config.py", "pattern": "\\.get\\("},
+    {"type": "valid_python",     "file": "config.py"},
+    {"type": "tests_pass",       "command": "python -m pytest test_config.py -x -q --tb=short"}
+  ],
+  "test_commands": []
+}

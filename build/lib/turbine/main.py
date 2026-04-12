@@ -118,19 +118,10 @@ async def run(
     chat_id: str | None = None,
     new_chat: bool = False,
 ) -> None:
+    log = TurbineLogger()
     api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key:
         raise EnvironmentError("MISTRAL_API_KEY not set. Add it to your .env file.")
-
-    # --json-events: create the UI first so the logger can forward to it immediately
-    if json_events:
-        ui: TurbineUI | JsonEventUI = JsonEventUI()
-    else:
-        ui_enabled = not no_ui and sys.stdout.isatty()
-        ui = TurbineUI(title=target, enabled=ui_enabled)
-
-    json_ui = ui if json_events else None
-    log = TurbineLogger(ui=json_ui)
 
     # Step 1: Discovery
     log.thinking(f"Mapping project tree at: {target}")
@@ -161,6 +152,13 @@ async def run(
         log.error(str(exc))
         return
 
+    # --json-events: use structured JSON emitter; otherwise use Rich dashboard
+    if json_events:
+        ui: TurbineUI | JsonEventUI = JsonEventUI()
+    else:
+        ui_enabled = not no_ui and sys.stdout.isatty()
+        ui = TurbineUI(title=target, enabled=ui_enabled)
+
     # Steps 2–5: Preprocess → Investigate → Delegate → Commit & Verify
     # Preflight, branch creation, review gate, repair loop, and cleanup are
     # all handled inside Manager.run() — no glue code needed here.
@@ -176,7 +174,6 @@ async def run(
         verbose=verbose,
         git=git,
         chat_id=chat_id,
-        json_ui=json_ui,
     )
 
     try:

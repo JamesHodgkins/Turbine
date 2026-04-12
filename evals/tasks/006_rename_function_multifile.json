@@ -1,0 +1,20 @@
+{
+  "id": "task-006",
+  "description": "Rename function `calc` to `calculate` across math.py and app.py",
+  "category": "multi-file-refactor",
+  "request": "Rename the function `calc` to `calculate` everywhere: update its definition in math.py and all call sites in app.py.",
+  "snapshot": {
+    "math.py": "def calc(a, b, op):\n    \"\"\"Perform a basic arithmetic operation.\"\"\"\n    if op == '+':\n        return a + b\n    elif op == '-':\n        return a - b\n    return None\n",
+    "app.py": "from math import calc\n\ndef run():\n    result = calc(10, 5, '+')\n    print(result)\n    return calc(10, 5, '-')\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "math.py"},
+    {"type": "file_modified",        "file": "app.py"},
+    {"type": "content_contains",     "file": "math.py", "pattern": "def calculate"},
+    {"type": "content_not_contains", "file": "math.py", "pattern": "def calc\\b"},
+    {"type": "content_contains",     "file": "app.py",  "pattern": "calculate"},
+    {"type": "valid_python",         "file": "math.py"},
+    {"type": "valid_python",         "file": "app.py"}
+  ],
+  "test_commands": []
+}

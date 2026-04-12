@@ -1,70 +1,6 @@
 # Turbine Development Roadmap
 
-## Phase 1 — Foundation & Scaffolding
-
-- [x] Initialize Python environment (3.12+) and `.env` for Mistral API keys.
-- [x] Implement Token Manager using `mistral-common` (Tekken tokenizer).
-- [x] Build Step 1: Tree Mapper using Python's `os` or an MCP filesystem server.
-- [x] Create a basic logging system to track "Thinking" and "Action" phases.
-
-## Phase 2 — The Virtual File System (VFS)
-
-- [x] Design the `VirtualFileSystem` class to hold in-memory file states.
-- [x] Implement `apply_diff()` to stage changes without touching the disk.
-- [x] Build a Conflict Detector to identify overlapping line ranges between multiple worker diffs.
-
-## Phase 3 — The Manager (Dynamo)
-
-- [x] Develop the Manager agent logic.
-- [x] Prompt for Step 2: Preprocess (pruning the tree).
-- [x] Prompt for Step 3: Investigation (issue diagnosis).
-- [x] Task decomposition: break the prompt into JSON "tickets".
-- [x] Implement an `asyncio` loop to spawn and manage multiple worker tasks.
-
-## Phase 4 — Worker Loop (Step 4)
-
-- [x] Create the Worker agent prompt template (domain isolation: only relevant files).
-- [x] Implement the "Ready to Proceed" handshake: worker proposes change → manager checks VFS → manager approves or returns constraints.
-- [x] Handle Mistral API retries and context-window monitoring.
-
-## Phase 5 — Implementation & Verification (Steps 5 & 6)
-
-- [x] Build the Commit Engine: write VFS changes to disk once "Ready to Proceed" is clear.
-- [x] Implement the Test Runner to execute shell commands (e.g., `pytest`, `make`, `npm test`).
-- [x] Capture `stderr`/`stdout` and feed failures back to the specific worker's context.
-
-## Phase 6 — Refinement & UI
-
-- [x] Create a rich CLI showing the status of each worker in real time.
-- [x] Add a Manual Review gate before the VFS writes to disk.
-- [x] Add `JsonEventUI` + `--json-events` flag to Python backend
-- [x] Scaffold VS Code extension (TypeScript)
-- [x] Wire subprocess runner + WebView panel
-- [x] Package Python side as installable CLI (`pip install`)
-
-## Phase 7 — Git Integration *Critical*
-
-- [x] Check for dirty working tree before any run; warn or abort if uncommitted changes exist.
-- [x] Create a feature branch (`turbine/run-<timestamp>`) before making disk changes.
-- [x] Auto-commit written files with a structured message (diagnosis summary + ticket list).
-- [x] Add `--no-branch` flag to skip branch creation for users who manage git themselves.
-- [x] Expose `git diff HEAD` as an undo hint in the final report.
-
-## Phase 8 — New File Creation
-
-- [ ] Extend the `Ticket` schema with an optional `new_files` list.
-- [ ] Update the Investigation prompt to allow the LLM to declare new files alongside existing ones.
-- [ ] Load new-file stubs into the VFS (`load_text(key, "")`) during delegation so workers can propose content.
-- [ ] Ensure `CommitEngine` creates parent directories and writes new files cleanly.
-- [ ] Add conflict detection for new files (two workers targeting the same new path).
-
-## Phase 9 — Scoped Edit Format for Large Files
-
-- [ ] Add a file-size heuristic: files over ~200 lines switch from "return complete content" to "return a list of scoped edits".
-- [ ] Define a structured edit schema: `{ "function": "name", "replacement": "..." }` or `{ "lines": [start, end], "replacement": "..." }`.
-- [ ] Build a `ScopedEditApplicator` that validates the edit target exists before applying.
-- [ ] Fall back to complete-content mode if scoped edit parsing fails.
-- [ ] **Definition integrity check (anti-hallucination guard):** before staging any diff, compare `def`/`class` definition counts in the original vs proposed output. If definitions present in the original have vanished without appearing as `-` lines in the diff, reject the proposal and send it back to the worker with an explicit list of what was lost. This catches the most common silent-deletion hallucination pattern before it reaches disk.
+** SEE TODO_COMPLETED.md FOR PREVIOUSLY COMPLETED TASKS **
 
 ## Phase 10 — Read-Only Context Files for Workers
 
@@ -91,10 +27,10 @@
 
 ## Phase 13 — Eval Harness *Critical*
 
-- [ ] Define a benchmark format: a directory of `task.json` files, each with a repo snapshot, a request string, and a set of expected file diffs or assertions.
-- [ ] Build an `EvalRunner` that runs Turbine against each task in dry-run mode and scores the result (files changed, lines correct, tests passing).
-- [ ] Start with 20 representative tasks covering: single-file edits, multi-file refactors, new file creation, and bug fixes with failing tests.
-- [ ] Add a `turbine eval` CLI subcommand that prints a pass/fail table and an overall score.
+- [x] Define a benchmark format: a directory of `task.json` files, each with a repo snapshot, a request string, and a set of expected file diffs or assertions.
+- [x] Build an `EvalRunner` that runs Turbine against each task in dry-run mode and scores the result (files changed, lines correct, tests passing).
+- [x] Start with 20 representative tasks covering: single-file edits, multi-file refactors, new file creation, and bug fixes with failing tests.
+- [x] Add a `turbine eval` CLI subcommand that prints a pass/fail table and an overall score.
 - [ ] Gate any prompt or model change on running the eval suite — never tune blind.
 
 ## Phase 14 — Semantic Post-Commit Validation
@@ -160,6 +96,7 @@ Turbine is production-ready when:
 - [ ] The eval suite has 50+ tasks (split across Wide and Deep mode scenarios) with a documented baseline pass rate.
 - [ ] The router correctly selects Wide vs Deep mode without user intervention for representative tasks.
 - [ ] Git integration, new file creation, and scoped edits are all live.
+- [ ] Chat session isolation (`--new-chat`, `--chat-id`, `purge`) and the Disk-as-Truth protocol are fully operational.
 - [ ] A `turbine.toml` makes repeated use on a project friction-free.
 - [ ] The VS Code extension supports accept/reject per worker and shows live cost.
 - [ ] A new user can install, configure, and run their first successful task in under 10 minutes.

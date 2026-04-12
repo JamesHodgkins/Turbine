@@ -1,0 +1,15 @@
+{
+  "id": "task-005",
+  "description": "Fix is_adult to use >= 18 instead of > 18",
+  "category": "single-file-edit",
+  "request": "The function is_adult incorrectly excludes 18-year-olds because it uses strict greater-than. Fix the comparison so that is_adult(18) returns True.",
+  "snapshot": {
+    "age_check.py": "def is_adult(age):\n    \"\"\"Return True if age qualifies as an adult (18 or older).\"\"\"\n    return age > 18\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "age_check.py"},
+    {"type": "content_contains", "file": "age_check.py", "pattern": ">= 18|>=18"},
+    {"type": "valid_python",     "file": "age_check.py"}
+  ],
+  "test_commands": []
+}

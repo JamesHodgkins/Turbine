@@ -1,0 +1,17 @@
+{
+  "id": "task-014",
+  "description": "Fix mutable default argument bug in append_item",
+  "category": "bug-fix-with-tests",
+  "request": "The function append_item uses a mutable list as a default argument, so the same list is reused across calls. Fix it using the standard None-sentinel pattern so each call without an explicit list gets a fresh empty list.",
+  "snapshot": {
+    "collector.py": "def append_item(item, items=[]):\n    \"\"\"Append item to list and return the list.\"\"\"\n    items.append(item)\n    return items\n",
+    "test_collector.py": "from collector import append_item\n\ndef test_fresh_list_per_call():\n    r1 = append_item('a')\n    r2 = append_item('b')\n    assert r1 == ['a'], f'Expected [\"a\"], got {r1}'\n    assert r2 == ['b'], f'Expected [\"b\"], got {r2}'\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "collector.py"},
+    {"type": "content_contains", "file": "collector.py", "pattern": "None"},
+    {"type": "valid_python",     "file": "collector.py"},
+    {"type": "tests_pass",       "command": "python -m pytest test_collector.py -x -q --tb=short"}
+  ],
+  "test_commands": []
+}

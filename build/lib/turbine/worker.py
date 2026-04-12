@@ -33,12 +33,6 @@ from typing import TYPE_CHECKING
 
 from turbine.logger import TurbineLogger
 from turbine.manager import Ticket, WorkerResult
-from turbine.scoped_edit import (
-    LARGE_FILE_THRESHOLD,
-    ScopedEditApplicator,
-    check_definition_integrity,
-    parse_scoped_edits,
-)
 from turbine.vfs import ConflictDetector, VirtualFileSystem
 
 if TYPE_CHECKING:
@@ -85,15 +79,14 @@ Rules:
 """
 
 
-def _build_worker_system(diagnosis: str, has_large_files: bool = False) -> str:
-    """Inject the Manager's full diagnosis (and large-file instructions) into
-    the worker system prompt."""
-    prompt = _WORKER_SYSTEM_BASE
-    if has_large_files:
-        prompt += _SCOPED_EDIT_INSTRUCTIONS
-    if diagnosis:
-        prompt += f"\n## Manager Diagnosis (full context)\n{diagnosis}\n"
-    return prompt
+def _build_worker_system(diagnosis: str) -> str:
+    """Inject the Manager's full diagnosis into the worker system prompt."""
+    if not diagnosis:
+        return _WORKER_SYSTEM_BASE
+    return (
+        _WORKER_SYSTEM_BASE
+        + f"\n## Manager Diagnosis (full context)\n{diagnosis}\n"
+    )
 
 WORKER_USER_TEMPLATE = """\
 ## Task
@@ -116,56 +109,6 @@ The files below show their CURRENT state after the other worker's changes have b
 applied. You MUST base your new proposal on these updated contents — not the original
 file you were given at the start.  Write your complete new file(s) using the same
 <file path="..."> format, building on top of the current state shown here.
-
-{current_files}
-"""
-
-# ---------------------------------------------------------------------------
-# Scoped-edit mode (Phase 9) — used for large files
-# ---------------------------------------------------------------------------
-
-_SCOPED_EDIT_INSTRUCTIONS = """\
-
-## Large-file mode — scoped edits required for some files
-
-For every file marked [LARGE FILE — use scoped edits] below, do NOT return
-the complete file content.  Instead return a JSON array of targeted edits
-inside a <scoped_edits path="relative/path/to/file.py"> … </scoped_edits>
-block.  Each edit is a JSON object with ONE of these two forms:
-
-  Function/class scope:
-    { "function": "<exact_name>", "replacement": "<complete new body>" }
-
-  Line range:
-    { "lines": [<start_1based>, <end_1based>], "replacement": "<new text>" }
-
-Rules for scoped edits:
-  - Use "function" form whenever possible — it is more robust.
-  - "replacement" is the COMPLETE new text for that region (all lines).
-    To delete a region, use an empty string "".
-  - Do NOT include the def/class signature line in "replacement" for
-    function-scoped edits — it is automatically preserved.
-    Wait — CORRECTION: include the ENTIRE definition including the signature.
-  - Edits must not overlap each other.
-  - Keep all existing functions/classes that you are not changing — omit them
-    from the edit list entirely (they are preserved automatically).
-
-For files NOT marked [LARGE FILE], continue using the normal
-<file path="..."> complete-content format.
-"""
-
-_INTEGRITY_REJECTION_TEMPLATE = """\
-Your previous proposal was rejected because it silently dropped existing
-definitions that were not included as removals in the diff.
-
-The following names exist in the original file but are absent from your
-proposed version — you must either keep them intact or explicitly delete
-them with an empty replacement:
-
-{lost_names}
-
-Please resubmit your complete proposal, preserving every definition that
-should not be deleted.
 
 {current_files}
 """
@@ -194,41 +137,11 @@ def _normalize_path(raw: str) -> str:
     return p
 
 
-def _strip_code_fence(content: str) -> str:
-    """Remove a wrapping markdown code fence if the LLM added one."""
-    content = content.strip("\n")
-    if content.startswith("```"):
-        lines = content.splitlines()
-        # Drop the opening fence line (e.g. "```python" or "```")
-        start = 1
-        # Drop the closing fence if present
-        end = len(lines)
-        if lines[-1].strip() == "```":
-            end -= 1
-        content = "\n".join(lines[start:end])
-    return content
-
-
 def _extract_file_blocks(text: str) -> dict[str, str]:
     """Return {relative_path: new_content} from an LLM response."""
     return {
-        _normalize_path(m.group(1)): _strip_code_fence(m.group(2))
+        _normalize_path(m.group(1)): m.group(2).strip("\n")
         for m in _FILE_BLOCK.finditer(text)
-    }
-
-
-# Scoped-edit block: <scoped_edits path="..."> ... </scoped_edits>
-_SCOPED_EDIT_BLOCK = re.compile(
-    r"""<scoped_edits\s+path=["']([^"']+)["']\s*>(.*?)</scoped_edits>""",
-    re.DOTALL,
-)
-
-
-def _extract_scoped_edit_blocks(text: str) -> dict[str, str]:
-    """Return {relative_path: raw_json_text} from an LLM response."""
-    return {
-        _normalize_path(m.group(1)): _strip_code_fence(m.group(2).strip())
-        for m in _SCOPED_EDIT_BLOCK.finditer(text)
     }
 
 
@@ -290,26 +203,10 @@ class Worker:
     max_api_retries: int = MAX_API_RETRIES
     ui: object | None = None   # turbine.ui.TurbineUI — optional, typed as object to avoid circular import
     verbose: bool = False
-    json_ui: object | None = None   # turbine.json_ui.JsonEventUI — forwarded to TurbineLogger
 
     def __post_init__(self) -> None:
-        self.log = TurbineLogger(ui=self.json_ui)
+        self.log = TurbineLogger()
         self._conflict_detector = ConflictDetector(self.vfs)
-        # Phase 9: identify which of this worker's files exceed the threshold
-        self._large_files: set[str] = {
-            rel
-            for rel in self.ticket.relevant_files
-            if self._is_large_file(rel)
-        }
-
-    # ------------------------------------------------------------------
-    # Large-file helpers (Phase 9)
-    # ------------------------------------------------------------------
-
-    def _is_large_file(self, rel: str) -> bool:
-        """Return True if the VFS snapshot for *rel* is at or above the threshold."""
-        snap = self.vfs.get_snapshot(rel)
-        return snap is not None and len(snap) >= LARGE_FILE_THRESHOLD
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -344,13 +241,8 @@ class Worker:
 
         # Conversation history: [system, user, assistant, user, ...]
         messages: list[dict] = [
-            {
-                "role": "system",
-                "content": _build_worker_system(
-                    self.diagnosis, has_large_files=bool(self._large_files)
-                ),
-            },
-            {"role": "user", "content": initial_user},
+            {"role": "system", "content": _build_worker_system(self.diagnosis)},
+            {"role": "user",   "content": initial_user},
         ]
 
         conflict_retry = False  # True after the first conflict — diff against snapshot
@@ -385,27 +277,8 @@ class Worker:
                     f"{preview}{suffix}"
                 )
 
-            # -------------------------------------------------------
-            # Phase 9: parse scoped-edit blocks for large files, then
-            # fall back to complete-content blocks for the rest.
-            # -------------------------------------------------------
-            scoped_blocks = _extract_scoped_edit_blocks(assistant_text)
+            # Parse the file blocks from the LLM response
             file_blocks = _extract_file_blocks(assistant_text)
-
-            # Resolve scoped edits → complete file content (with fallback)
-            for rel, raw_json in scoped_blocks.items():
-                resolved = self._apply_scoped_edits(rel, raw_json, conflict_retry)
-                if resolved is not None:
-                    # Scoped edit applied — treat like a complete file block
-                    file_blocks[rel] = resolved
-                else:
-                    self.log.action(
-                        f"Worker [{self.ticket.id}] — scoped edit for '{rel}' "
-                        "failed; falling back to complete-content mode."
-                    )
-                    # Fallback: the LLM must supply a full file block.
-                    # If it didn't, we have nothing for this file — skip.
-
             if not file_blocks:
                 self.log.action(f"Worker [{self.ticket.id}] — no file blocks produced (no changes).")
                 if self.ui:
@@ -418,29 +291,6 @@ class Worker:
                         f"Worker [{self.ticket.id}] parsed block '{path}' "
                         f"({len(content.splitlines())} lines)"
                     )
-
-            # -------------------------------------------------------
-            # Phase 9: definition integrity check (anti-hallucination)
-            # -------------------------------------------------------
-            integrity_ok, integrity_msg = self._check_integrity(file_blocks, conflict_retry)
-            if not integrity_ok:
-                self.log.thinking(
-                    f"Worker [{self.ticket.id}] — integrity check failed; "
-                    "sending rejection with lost definitions."
-                )
-                if self.ui:
-                    self.ui.on_worker_conflict(
-                        self.ticket.id, detail="integrity:definitions lost"
-                    )
-                current_files = self._build_file_contents()
-                messages.append({
-                    "role": "user",
-                    "content": _INTEGRITY_REJECTION_TEMPLATE.format(
-                        lost_names=integrity_msg,
-                        current_files=current_files,
-                    ),
-                })
-                continue  # next handshake attempt
 
             # Convert complete file contents → unified diff.
             # On conflict retries we diff against the current snapshot (which
@@ -575,109 +425,11 @@ class Worker:
         return False, constraint_msg
 
     # ------------------------------------------------------------------
-    # Phase 9 helpers: scoped edits & integrity
-    # ------------------------------------------------------------------
-
-    def _apply_scoped_edits(
-        self, rel: str, raw_json: str, use_snapshot: bool
-    ) -> str | None:
-        """Parse *raw_json* as a scoped-edit list, apply to the VFS snapshot,
-        and return the resulting complete file content as a string.
-
-        Returns ``None`` on any parse or application error (caller falls back
-        to complete-content mode).
-        """
-        import json as _json
-
-        try:
-            data = _json.loads(raw_json)
-        except _json.JSONDecodeError as exc:
-            self.log.error(
-                f"Worker [{self.ticket.id}] — scoped edit JSON parse error "
-                f"for '{rel}': {exc}"
-            )
-            return None
-
-        try:
-            edits = parse_scoped_edits(data)
-        except ValueError as exc:
-            self.log.error(
-                f"Worker [{self.ticket.id}] — scoped edit schema error "
-                f"for '{rel}': {exc}"
-            )
-            return None
-
-        ref = (
-            self.vfs.get_snapshot(rel) if use_snapshot else self.vfs.get_baseline(rel)
-        )
-        if ref is None:
-            norm = _normalize_path(rel)
-            ref = (
-                self.vfs.get_snapshot(norm) if use_snapshot else self.vfs.get_baseline(norm)
-            )
-        if ref is None:
-            self.log.error(
-                f"Worker [{self.ticket.id}] — no VFS reference for "
-                f"'{rel}' during scoped edit application."
-            )
-            return None
-
-        result = ScopedEditApplicator(ref).apply(edits)
-        if not result.success:
-            self.log.error(
-                f"Worker [{self.ticket.id}] — scoped edit application "
-                f"failed for '{rel}': {result.error}"
-            )
-            return None
-
-        return "\n".join(result.lines)
-
-    def _check_integrity(
-        self, file_blocks: dict[str, str], use_snapshot: bool
-    ) -> tuple[bool, str]:
-        """Run the definition integrity check against every file block.
-
-        Returns ``(True, "")`` when all files pass.
-        Returns ``(False, message)`` listing the lost definitions when any fail.
-        """
-        lost_lines: list[str] = []
-        for rel, new_content in file_blocks.items():
-            ref = (
-                self.vfs.get_snapshot(rel) if use_snapshot
-                else self.vfs.get_baseline(rel)
-            )
-            if ref is None:
-                norm = _normalize_path(rel)
-                ref = (
-                    self.vfs.get_snapshot(norm) if use_snapshot
-                    else self.vfs.get_baseline(norm)
-                )
-            if ref is None:
-                continue  # new file — nothing to compare against
-            if not ref:
-                continue  # empty original — no definitions to lose
-
-            lost = check_definition_integrity(ref, new_content.splitlines())
-            if lost:
-                lost_lines.append(
-                    f"  {rel}: missing {', '.join(lost)}"
-                )
-
-        if lost_lines:
-            return False, "\n".join(lost_lines)
-        return True, ""
-
-    # ------------------------------------------------------------------
     # Context helpers
     # ------------------------------------------------------------------
 
     def _build_file_contents(self) -> str:
-        """Return a formatted string of all files this worker may touch or create.
-
-        Phase 9: files at or above LARGE_FILE_THRESHOLD are labelled so the
-        worker knows to use the scoped-edit format instead of returning the
-        complete file.
-        """
+        """Return a formatted string of all files this worker may touch or create."""
         parts: list[str] = []
         for rel in self.ticket.relevant_files:
             snapshot = self.vfs.get_snapshot(rel)
@@ -685,11 +437,7 @@ class Worker:
                 self.log.error(f"Worker [{self.ticket.id}] — no VFS snapshot for '{rel}', skipping.")
                 continue
             content = "\n".join(snapshot)
-            if rel in self._large_files:
-                label = f"### {rel} [LARGE FILE — use scoped edits]"
-            else:
-                label = f"### {rel}"
-            parts.append(f"{label}\n```\n{content}\n```")
+            parts.append(f"### {rel}\n```\n{content}\n```")
         # Phase 8: show new-file stubs so the worker knows what to populate
         for rel in self.ticket.new_files:
             parts.append(f"### {rel} *(new file — currently empty)*\n```\n```")

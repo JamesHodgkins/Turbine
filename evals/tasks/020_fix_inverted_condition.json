@@ -1,0 +1,15 @@
+{
+  "id": "task-020",
+  "description": "Fix inverted @ check in is_valid_email",
+  "category": "multi-file-complex",
+  "request": "The function is_valid_email has its condition backwards: it returns True when '@' is NOT in the email and False when it is. Fix the logic so it correctly returns True when the email contains '@'.",
+  "snapshot": {
+    "email_validator.py": "def is_valid_email(email):\n    \"\"\"Return True if the email address contains an @ sign.\"\"\"\n    if '@' not in email:\n        return True\n    return False\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "email_validator.py"},
+    {"type": "content_contains", "file": "email_validator.py", "pattern": "'@' in email|\"@\" in email"},
+    {"type": "valid_python",     "file": "email_validator.py"}
+  ],
+  "test_commands": []
+}

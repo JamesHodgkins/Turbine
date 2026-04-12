@@ -8,22 +8,34 @@
   <title>Turbine</title>
   <style>
     :root {
-      --bg:       var(--vscode-sideBar-background,        #252526);
-      --fg:       var(--vscode-sideBar-foreground,        #cccccc);
-      --border:   var(--vscode-sideBarSectionHeader-border, #3c3c3c);
-      --input-bg: var(--vscode-input-background,          #3c3c3c);
-      --input-fg: var(--vscode-input-foreground,          #cccccc);
-      --input-border: var(--vscode-input-border,          #3c3c3c);
-      --btn-bg:   var(--vscode-button-background,         #0e639c);
-      --btn-fg:   var(--vscode-button-foreground,         #ffffff);
-      --btn-hover:var(--vscode-button-hoverBackground,    #1177bb);
-      --accent:   var(--vscode-focusBorder,               #007fd4);
-      --green:  #4ec94e;
-      --red:    #f44747;
-      --yellow: #e5c07b;
-      --cyan:   #56b6c2;
-      --magenta:#c678dd;
-      --dim:    #6a6a6a;
+      --bg:            var(--vscode-sideBar-background,           #1a1a1e);
+      --bg-elevated:   var(--vscode-editor-background,            #1e1e23);
+      --fg:            var(--vscode-sideBar-foreground,           #ececec);
+      --fg-muted:      var(--vscode-descriptionForeground,        #b0b0bc);
+      --border:        var(--vscode-sideBarSectionHeader-border,  #2d2d35);
+      --border-subtle: color-mix(in srgb, var(--border) 60%, transparent);
+      --input-bg:      var(--vscode-input-background,             #252529);
+      --input-fg:      var(--vscode-input-foreground,             #ececec);
+      --input-border:  var(--vscode-input-border,                 #3a3a44);
+      --btn-bg:        #FF2F00;
+      --btn-fg:        var(--vscode-button-foreground,            #ffffff);
+      --btn-hover:     #ff4d20;
+      --accent:        #FF2F00;
+      --accent-glow:   color-mix(in srgb, #FF2F00 20%, transparent);
+      --green:         #3fb950;
+      --green-dim:     color-mix(in srgb, #3fb950 22%, transparent);
+      --red:           #f85149;
+      --red-dim:       color-mix(in srgb, #f85149 15%, transparent);
+      --yellow:        #d29922;
+      --yellow-dim:    color-mix(in srgb, #d29922 18%, transparent);
+      --cyan:          #58a6ff;
+      --cyan-dim:      color-mix(in srgb, #58a6ff 15%, transparent);
+      --magenta:       #bc8cff;
+      --dim:           #7a7a8a;
+
+      --radius-sm:  4px;
+      --radius-md:  6px;
+      --radius-lg:  8px;
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -32,248 +44,617 @@
       height: 100%;
       background: var(--bg);
       color: var(--fg);
-      font-family: var(--vscode-font-family, system-ui, sans-serif);
+      font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
       font-size: var(--vscode-font-size, 13px);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
     }
 
-    #app { display: flex; flex-direction: column; height: 100vh; }
-    #history { flex: 1; overflow-y: auto; padding: 10px 12px 6px; }
+    #app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 
-    #composer {
-      border-top: 1px solid var(--border);
-      padding: 8px 10px;
+    /* ── Header / Brand ───────────────────────────────────────── */
+    #header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px 10px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      flex-shrink: 0;
+    }
+
+    #header-logo {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      opacity: 0.92;
+    }
+
+    #header-title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--fg);
+      flex: 1;
+    }
+
+    /* ── Composer toolbar (below textarea) ───────────────────── */
+    .toolbar-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--fg-muted);
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 3px 9px;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: color 0.12s, border-color 0.12s, background 0.12s;
+      line-height: 1.4;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .toolbar-btn:hover {
+      color: var(--fg);
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+
+    #cancel-btn { display: none; color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
+    #cancel-btn:hover { background: var(--red-dim); border-color: var(--red); color: var(--red); }
+    #cancel-btn.visible { display: flex; }
+
+    #session-select {
+      flex: 1; min-width: 0; display: none;
+      background: var(--input-bg); color: var(--input-fg);
+      border: 1px solid var(--input-border); border-radius: var(--radius-sm);
+      font-size: 11px; font-family: inherit;
+      padding: 3px 6px; cursor: pointer;
+    }
+    #session-select:focus { outline: none; border-color: var(--accent); }
+
+    /* ── History ──────────────────────────────────────────────── */
+    #history { flex: 1; overflow-y: auto; padding: 12px 12px 6px; }
+
+    #history::-webkit-scrollbar { width: 5px; }
+    #history::-webkit-scrollbar-track { background: transparent; }
+    #history::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 9px; }
+
+    /* ── Empty state ────────────────────────────────────────────── */
+    #empty-state {
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      background: var(--bg);
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      gap: 12px;
+      padding: 32px 24px;
+      text-align: center;
     }
 
-    /* ── Empty state ────────────────────────────────────────── */
-    #empty-state {
-      display: flex; flex-direction: column; align-items: center;
-      justify-content: center; height: 100%; gap: 8px;
-      color: var(--dim); font-size: 12px; text-align: center; padding: 20px;
+    #empty-logo {
+      width: 48px;
+      height: 48px;
+      opacity: 0.25;
     }
-    #empty-state .logo { font-size: 28px; }
 
-    /* ── Run block ──────────────────────────────────────────── */
-    .run-block { margin-bottom: 14px; }
+    #empty-state h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--fg-muted);
+      letter-spacing: 0.04em;
+    }
+
+    #empty-state p {
+      font-size: 12px;
+      color: var(--dim);
+      max-width: 200px;
+      line-height: 1.6;
+    }
+
+    #empty-tips {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      width: 100%;
+      max-width: 220px;
+      margin-top: 4px;
+    }
+
+    .tip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--dim);
+      text-align: left;
+      padding: 5px 8px;
+      background: color-mix(in srgb, var(--border) 30%, transparent);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+    }
+    .tip-icon { color: var(--accent); font-size: 12px; flex-shrink: 0; }
+
+    /* ── Run block ──────────────────────────────────────────────── */
+    .run-block {
+      margin-bottom: 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      background: var(--bg-elevated);
+    }
 
     .run-header {
-      display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;
-    }
-    .run-prompt { font-weight: 600; font-size: 13px; color: var(--fg); flex: 1; }
-    .run-meta { font-size: 11px; color: var(--dim); white-space: nowrap; }
-    .run-badge {
-      font-size: 10px; padding: 1px 6px; border-radius: 3px;
-      background: color-mix(in srgb, var(--accent) 20%, transparent);
-      color: var(--cyan);
-      border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--border) 25%, transparent);
     }
 
-    /* ── Step cards ─────────────────────────────────────────── */
-    .step-cards { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+    .run-prompt-icon {
+      font-size: 12px;
+      color: var(--accent);
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .run-prompt {
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--fg);
+      flex: 1;
+      line-height: 1.5;
+    }
+
+    .run-meta {
+      font-size: 10px;
+      color: var(--dim);
+      white-space: nowrap;
+      padding-top: 2px;
+    }
+
+    .run-badge {
+      font-size: 10px;
+      padding: 1px 7px;
+      border-radius: 20px;
+      background: var(--yellow-dim);
+      color: var(--yellow);
+      border: 1px solid color-mix(in srgb, var(--yellow) 30%, transparent);
+      white-space: nowrap;
+      flex-shrink: 0;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Step cards ─────────────────────────────────────────────── */
+    .step-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      padding: 8px;
+      gap: 4px;
+    }
 
     .step-card {
       border: 1px solid var(--border);
-      border-radius: 4px;
+      border-radius: var(--radius-md);
       overflow: hidden;
+      transition: border-color 0.15s;
     }
-    .step-card.step-active { border-color: var(--accent); }
-    .step-card.step-done {
-      border-color: color-mix(in srgb, var(--green) 35%, var(--border));
-    }
-    .step-card.step-error { border-color: var(--red); }
+    .step-card.step-active  { border-color: var(--cyan); }
+    .step-card.step-done    { border-color: color-mix(in srgb, var(--green) 40%, var(--border)); }
+    .step-card.step-error   { border-color: var(--red); }
 
     .step-card-header {
-      display: flex; align-items: center; gap: 6px;
-      padding: 5px 8px; cursor: pointer;
-      background: color-mix(in srgb, var(--border) 20%, transparent);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      background: transparent;
       user-select: none;
+      transition: background 0.1s;
     }
-    .step-card-header:hover {
-      background: color-mix(in srgb, var(--border) 40%, transparent);
-    }
-    .step-card.step-active .step-card-header {
-      background: color-mix(in srgb, var(--accent) 12%, transparent);
-    }
-    .step-card.step-done .step-card-header {
-      background: color-mix(in srgb, var(--green) 6%, transparent);
-    }
-    .step-card.step-error .step-card-header {
-      background: color-mix(in srgb, var(--red) 8%, transparent);
-    }
+    .step-card-header:hover { background: color-mix(in srgb, var(--border) 30%, transparent); }
 
-    .step-icon { font-size: 11px; width: 14px; text-align: center; flex-shrink: 0; color: var(--dim); }
+    .step-icon {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--dim);
+    }
+    .step-icon svg { width: 16px; height: 16px; }
     .step-card.step-active .step-icon { color: var(--cyan); }
     .step-card.step-done   .step-icon { color: var(--green); }
     .step-card.step-error  .step-icon { color: var(--red); }
 
     .step-name {
-      font-size: 11px; font-weight: 600; white-space: nowrap; flex-shrink: 0; color: var(--fg);
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+      color: var(--fg);
+      letter-spacing: 0.01em;
     }
-    .step-card.step-done .step-name {
-      color: color-mix(in srgb, var(--fg) 65%, var(--dim));
-    }
+    .step-card.step-done .step-name { color: var(--fg-muted); }
 
     .step-live {
-      font-size: 11px; color: var(--dim); flex: 1;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      padding-left: 4px;
+      font-size: 11px;
+      color: var(--dim);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding-left: 2px;
     }
-    .step-card.step-active .step-live { color: var(--fg); }
+    .step-card.step-active .step-live { color: var(--fg-muted); }
 
     .step-count {
-      font-size: 10px; color: var(--dim); white-space: nowrap; flex-shrink: 0;
-      padding: 1px 5px; border-radius: 3px;
-      background: color-mix(in srgb, var(--border) 50%, transparent);
+      font-size: 10px;
+      color: var(--dim);
+      white-space: nowrap;
+      flex-shrink: 0;
+      padding: 1px 6px;
+      border-radius: 20px;
+      background: color-mix(in srgb, var(--border) 55%, transparent);
+      border: 1px solid var(--border-subtle);
     }
 
     .step-arrow {
-      font-size: 9px; color: var(--dim); transition: transform 0.15s; flex-shrink: 0;
+      font-size: 8px;
+      color: var(--dim);
+      transition: transform 0.15s;
+      flex-shrink: 0;
+      margin-left: 2px;
     }
 
-    .step-card-body {
-      border-top: 1px solid var(--border);
-    }
+    .step-card-body { border-top: 1px solid var(--border); }
 
-    /* Workers section inside step card */
+    /* ── Workers ─────────────────────────────────────────────────── */
     .step-workers {
-      padding: 6px 8px 4px;
-      border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+      padding: 8px 10px 6px;
+      border-bottom: 1px solid var(--border-subtle);
     }
+
     .worker-table { width: 100%; border-collapse: collapse; font-size: 11px; }
     .worker-table th {
-      text-align: left; color: var(--dim); font-weight: 500;
-      padding: 2px 6px 4px 0; border-bottom: 1px solid var(--border);
+      text-align: left;
+      color: var(--dim);
+      font-weight: 500;
+      padding: 0 8px 5px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 10px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
     }
+    .worker-table th:first-child { padding-left: 0; }
     .worker-table td {
-      padding: 3px 6px 3px 0;
-      border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+      padding: 4px 8px 4px 0;
+      border-bottom: 1px solid var(--border-subtle);
       vertical-align: top;
+      font-size: 11px;
     }
     .worker-table tr:last-child td { border-bottom: none; }
-    .status-pending  { color: var(--dim); }
-    .status-running  { color: var(--cyan); }
-    .status-approved { color: var(--green); }
-    .status-conflict { color: var(--yellow); }
-    .status-failed   { color: var(--red); }
-    .status-repair   { color: var(--magenta); }
-    .worker-detail   { font-size: 10px; color: var(--dim); margin-top: 1px; }
 
-    /* Log lines inside step card */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 1px 6px;
+      border-radius: 20px;
+      font-size: 10px;
+      font-weight: 500;
+    }
+    .status-pending  { color: var(--dim); }
+    .status-running  .status-pill { background: var(--cyan-dim); color: var(--cyan); border: 1px solid color-mix(in srgb, var(--cyan) 25%, transparent); }
+    .status-approved .status-pill { background: var(--green-dim); color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 25%, transparent); }
+    .status-conflict .status-pill { background: var(--yellow-dim); color: var(--yellow); border: 1px solid color-mix(in srgb, var(--yellow) 25%, transparent); }
+    .status-failed   .status-pill { background: var(--red-dim); color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 25%, transparent); }
+    .status-repair   .status-pill { background: color-mix(in srgb, var(--magenta) 15%, transparent); color: var(--magenta); border: 1px solid color-mix(in srgb, var(--magenta) 25%, transparent); }
+
+    .worker-detail { font-size: 10px; color: var(--dim); margin-top: 2px; }
+
+    /* ── Logs ─────────────────────────────────────────────────────── */
     .step-logs {
-      padding: 5px 8px;
+      padding: 6px 10px 8px;
       max-height: 200px;
       overflow-y: auto;
-      font-family: var(--vscode-editor-font-family, monospace);
+      font-family: var(--vscode-editor-font-family, "Cascadia Code", "Fira Code", "Consolas", monospace);
       font-size: 11px;
-      line-height: 1.55;
+      line-height: 1.6;
     }
-    .log-line { white-space: pre-wrap; word-break: break-all; }
+    .step-logs::-webkit-scrollbar { width: 4px; }
+    .step-logs::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 4px; }
+
+    .log-line     { white-space: pre-wrap; word-break: break-all; padding: 0.5px 0; }
     .log-thinking { color: var(--cyan); }
     .log-action   { color: var(--green); }
     .log-error    { color: var(--red); }
     .log-debug    { color: var(--dim); }
     .log-done     { color: var(--green); font-weight: 600; }
 
-    /* ── Run status footer ──────────────────────────────────── */
-    .run-status { font-size: 11px; color: var(--dim); padding-top: 2px; }
-    .run-status.running::before { content: "● "; color: var(--cyan); }
-    .run-status.done::before    { content: "✓ "; color: var(--green); }
-    .run-status.error::before   { content: "✗ "; color: var(--red); }
+    /* ── Run footer ───────────────────────────────────────────────── */
+    .run-footer {
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--dim);
+      border-top: 1px solid var(--border-subtle);
+    }
+    .run-status-dot {
+      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+    }
+    .run-status.running .run-status-dot { background: var(--cyan); animation: pulse 1.4s ease-in-out infinite; }
+    .run-status.done    .run-status-dot { background: var(--green); }
+    .run-status.error   .run-status-dot { background: var(--red); }
+    .run-status.running .run-status-text { color: var(--fg-muted); }
+    .run-status.done    .run-status-text { color: var(--green); }
+    .run-status.error   .run-status-text { color: var(--red); }
 
-    /* ── Result card ────────────────────────────────────────── */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.35; }
+    }
+
+    /* ── Result card ──────────────────────────────────────────────── */
     .result-card {
-      margin-top: 8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+      margin: 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
     }
+
     .result-card-header {
-      display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-      background: color-mix(in srgb, var(--green) 10%, transparent);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      font-weight: 600;
+      font-size: 13px;
       border-bottom: 1px solid var(--border);
-      font-weight: 600; font-size: 12px; color: var(--green);
+      background: transparent;
     }
-    .result-card-header.dry-run {
-      background: color-mix(in srgb, var(--yellow) 10%, transparent);
-      color: var(--yellow);
+    .result-card-header svg { flex-shrink: 0; }
+    .result-card-header.ok      { color: var(--green); }
+    .result-card-header.dry-run { color: var(--yellow); }
+    .result-card-header.partial { color: var(--yellow); }
+
+    .result-header-body {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
     }
-    .result-stats {
-      display: flex; gap: 16px; padding: 7px 10px; font-size: 11px;
-      border-bottom: 1px solid var(--border);
+    .result-header-title { font-size: 13px; font-weight: 600; }
+    .result-header-meta  { font-size: 11px; font-weight: 400; color: var(--fg-muted); }
+
+    .result-section {
+      padding: 8px 12px;
+      font-size: 11px;
+      color: var(--fg-muted);
+      line-height: 1.6;
+      border-bottom: 1px solid var(--border-subtle);
     }
-    .stat { display: flex; flex-direction: column; gap: 1px; }
-    .stat-value { font-weight: 600; font-size: 13px; color: var(--fg); }
-    .stat-label { color: var(--dim); font-size: 10px; }
-    .result-diagnosis {
-      padding: 7px 10px; font-size: 11px; color: var(--dim); line-height: 1.5;
-      border-bottom: 1px solid var(--border);
+    .result-section:last-child { border-bottom: none; }
+    .result-section-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--dim);
+      font-weight: 600;
+      margin-bottom: 4px;
+      display: block;
     }
-    .result-diagnosis strong {
-      color: var(--fg); display: block; margin-bottom: 3px;
-      font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+
+    .result-ticket {
+      font-size: 11px;
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      padding: 3px 0;
+      border-bottom: 1px solid var(--border-subtle);
     }
-    .result-tickets { padding: 6px 10px; display: flex; flex-direction: column; gap: 4px; }
-    .result-ticket { font-size: 11px; display: flex; gap: 6px; align-items: baseline; }
-    .result-ticket-id { color: var(--dim); min-width: 60px; font-size: 10px; }
+    .result-ticket:last-child { border-bottom: none; }
+    .result-ticket-id {
+      color: var(--dim);
+      font-size: 10px;
+      font-family: var(--vscode-editor-font-family, monospace);
+      flex-shrink: 0;
+      min-width: 56px;
+    }
     .result-ticket-desc { color: var(--fg); }
 
-    /* ── Composer ───────────────────────────────────────────── */
-    #prompt-wrap { position: relative; }
-    #prompt {
-      width: 100%; background: var(--input-bg); color: var(--input-fg);
-      border: 1px solid var(--input-border); border-radius: 4px;
-      padding: 7px 36px 7px 10px; font-family: inherit; font-size: 13px;
-      resize: none; min-height: 38px; max-height: 120px; line-height: 1.4;
-      overflow-y: auto; outline: none;
+    /* ── Composer ─────────────────────────────────────────────────── */
+    #composer {
+      border-top: 1px solid var(--border);
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      background: var(--bg);
+      flex-shrink: 0;
     }
-    #prompt:focus { border-color: var(--accent); }
+
+    #prompt {
+      width: 100%;
+      background: var(--input-bg);
+      color: var(--input-fg);
+      border: 1px solid var(--input-border);
+      border-radius: var(--radius-md);
+      padding: 8px 12px;
+      font-family: inherit;
+      font-size: 13px;
+      resize: none;
+      min-height: 40px;
+      max-height: 130px;
+      line-height: 1.5;
+      overflow-y: auto;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      display: block;
+    }
+    #prompt:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
     #prompt::placeholder { color: var(--dim); }
 
+    /* Bottom action row: session select | new-chat | spacer | cancel | send */
+    .composer-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .composer-spacer { flex: 1; }
+
     #send-btn {
-      position: absolute; right: 6px; bottom: 6px;
-      background: var(--btn-bg); color: var(--btn-fg); border: none; border-radius: 3px;
-      width: 24px; height: 24px; cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 13px; transition: background 0.1s;
+      background: var(--btn-bg);
+      color: var(--btn-fg);
+      border: none;
+      border-radius: var(--radius-sm);
+      height: 26px;
+      padding: 0 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-family: inherit;
+      font-weight: 600;
+      white-space: nowrap;
+      transition: background 0.12s, opacity 0.12s;
+      flex-shrink: 0;
     }
     #send-btn:hover:not(:disabled) { background: var(--btn-hover); }
-    #send-btn:disabled { opacity: 0.4; cursor: default; }
+    #send-btn:disabled { opacity: 0.35; cursor: default; }
+    #send-btn svg { width: 12px; height: 12px; }
 
-    .composer-row { display: flex; align-items: center; gap: 8px; }
-    #dry-run-label {
-      display: flex; align-items: center; gap: 4px; font-size: 11px;
-      color: var(--dim); cursor: pointer; user-select: none;
+    /* ── Archive view ─────────────────────────────────────────────── */
+    .archive-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 4px 8px;
+      margin-bottom: 10px;
+      border-bottom: 1px solid var(--border);
     }
-    #dry-run-label input { cursor: pointer; }
-    #cancel-btn {
-      background: none; border: 1px solid var(--border); color: var(--dim);
-      border-radius: 3px; font-size: 11px; padding: 2px 8px; cursor: pointer; display: none;
+    .archive-header strong {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--fg);
+      flex: 1;
     }
-    #cancel-btn:hover { color: var(--fg); border-color: var(--fg); }
-    #cancel-btn.visible { display: block; }
+    .archive-header span { font-size: 11px; color: var(--dim); }
+
+    .archive-run {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      margin-bottom: 10px;
+      overflow: hidden;
+      background: var(--bg-elevated);
+    }
+
+    .archive-run-header {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 8px 12px;
+      background: color-mix(in srgb, var(--border) 22%, transparent);
+      border-bottom: 1px solid var(--border);
+    }
+    .archive-request {
+      font-weight: 600;
+      font-size: 12px;
+      flex: 1;
+      color: var(--fg);
+    }
+    .archive-time { font-size: 10px; color: var(--dim); white-space: nowrap; }
+    .archive-stats {
+      padding: 6px 12px;
+      font-size: 11px;
+      color: var(--fg-muted);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .archive-stat-ok   { color: var(--green); }
+    .archive-stat-warn { color: var(--yellow); }
+    .archive-diagnosis {
+      padding: 6px 12px;
+      font-size: 11px;
+      color: var(--fg-muted);
+      line-height: 1.5;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .archive-tickets { padding: 6px 12px; }
+    .archive-ticket  { display: flex; gap: 8px; margin-bottom: 3px; font-size: 11px; }
+    .archive-ticket-id {
+      color: var(--dim);
+      font-size: 10px;
+      font-family: var(--vscode-editor-font-family, monospace);
+      flex-shrink: 0;
+      min-width: 52px;
+    }
   </style>
 </head>
 <body>
   <div id="app">
+
+    <!-- Brand header -->
+    <div id="header">
+      <svg id="header-logo" viewBox="0 0 250 250" xmlns="http://www.w3.org/2000/svg" style="fill-rule:evenodd;clip-rule:evenodd;">
+        <path d="M123.232,80.717C147.789,80.717 167.726,100.654 167.726,125.21C167.726,149.767 147.789,169.704 123.232,169.704C98.675,169.704 78.738,149.767 78.738,125.21C78.738,100.654 98.675,80.717 123.232,80.717ZM123.232,106.546C112.931,106.546 104.568,114.909 104.568,125.21C104.568,135.512 112.931,143.875 123.232,143.875C133.534,143.875 141.897,135.512 141.897,125.21C141.897,114.909 133.534,106.546 123.232,106.546ZM148.804,9.454C156,7.12 163.737,11.067 166.07,18.263L180.727,63.45C183.061,70.646 179.114,78.383 171.919,80.717C164.723,83.05 156.986,79.103 154.652,71.908L139.996,26.72C137.662,19.525 141.609,11.788 148.804,9.454ZM20.999,65.195C20.998,57.63 27.138,51.487 34.702,51.486L82.207,51.475C89.772,51.473 95.915,57.613 95.917,65.178C95.918,72.742 89.778,78.885 82.214,78.887L34.709,78.898C27.144,78.899 21.001,72.759 20.999,65.195ZM34.62,203.959C27.424,201.629 23.473,193.894 25.804,186.697L40.44,141.503C42.771,134.306 50.506,130.356 57.702,132.686C64.899,135.017 68.849,142.752 66.519,149.949L51.883,195.143C49.552,202.339 41.817,206.29 34.62,203.959ZM170.825,233.785C166.389,239.912 157.813,241.286 151.685,236.85L113.205,208.992C107.078,204.557 105.704,195.98 110.14,189.853C114.576,183.726 123.152,182.352 129.28,186.788L167.76,214.645C173.887,219.081 175.26,227.657 170.825,233.785ZM241.191,113.412C245.652,119.521 244.314,128.102 238.205,132.564L199.841,160.58C193.732,165.042 185.151,163.704 180.689,157.595C176.228,151.486 177.566,142.904 183.675,138.443L222.039,110.426C228.148,105.965 236.73,107.303 241.191,113.412Z" fill="#FF2F00"/>
+      </svg>
+      <span id="header-title">Turbine</span>
+    </div>
+
+    <!-- History -->
     <div id="history">
       <div id="empty-state">
-        <div class="logo">⚙</div>
-        <strong>Turbine</strong>
-        <span>Describe a change below and press Enter</span>
+        <svg id="empty-logo" viewBox="0 0 250 250" xmlns="http://www.w3.org/2000/svg" style="fill-rule:evenodd;clip-rule:evenodd;">
+          <path d="M125,0C193.989,0 250,56.011 250,125C250,193.989 193.989,250 125,250C56.011,250 0,193.989 0,125C0,56.011 56.011,0 125,0ZM123.232,82.146C99.473,82.146 80.184,101.436 80.184,125.195C80.184,148.954 99.473,168.243 123.232,168.243C146.991,168.243 166.28,148.954 166.28,125.195C166.28,101.436 146.991,82.146 123.232,82.146ZM123.232,109.822C131.717,109.822 138.605,116.71 138.605,125.195C138.605,133.679 131.717,140.567 123.232,140.567C114.748,140.567 107.859,133.679 107.859,125.195C107.859,116.71 114.748,109.822 123.232,109.822ZM168.787,226.734C173.502,220.221 172.043,211.104 165.529,206.389L129.935,180.621C123.422,175.906 114.305,177.365 109.59,183.879C104.874,190.393 106.334,199.509 112.848,204.225L148.442,229.992C154.955,234.708 164.072,233.248 168.787,226.734ZM146.303,16.322C138.654,18.803 134.458,27.027 136.939,34.676L150.496,76.474C152.977,84.123 161.201,88.319 168.85,85.838C176.499,83.357 180.695,75.133 178.214,67.484L164.657,25.686C162.176,18.037 153.951,13.841 146.303,16.322ZM233.871,113.165C229.128,106.671 220.006,105.249 213.512,109.992L178.025,135.907C171.531,140.649 170.109,149.772 174.852,156.266C179.594,162.76 188.717,164.182 195.211,159.439L230.697,133.524C237.191,128.782 238.613,119.659 233.871,113.165ZM26.776,69.681C26.778,77.722 33.308,84.249 41.349,84.248L85.291,84.238C93.332,84.236 99.859,77.706 99.857,69.665C99.856,61.623 93.326,55.096 85.284,55.098L41.342,55.108C33.301,55.11 26.774,61.64 26.776,69.681ZM40.684,199.836C48.334,202.314 56.557,198.114 59.034,190.464L72.573,148.66C75.05,141.01 70.851,132.788 63.201,130.31C55.55,127.833 47.328,132.032 44.851,139.682L31.312,181.486C28.835,189.137 33.034,197.359 40.684,199.836Z" fill="currentColor"/>
+        </svg>
+        <h2>Turbine</h2>
+        <p>Describe a change to your codebase and press Enter</p>
+        <div id="empty-tips">
+          <div class="tip"><span class="tip-icon">↵</span><span>Enter to run, Shift+Enter for newline</span></div>
+        </div>
       </div>
     </div>
 
+    <!-- Composer -->
     <div id="composer">
-      <div id="prompt-wrap">
-        <textarea id="prompt" rows="1" placeholder="Describe a change…"></textarea>
-        <button id="send-btn" title="Run (Enter)">↑</button>
-      </div>
+      <textarea id="prompt" rows="1" placeholder="Describe a change to your codebase…"></textarea>
       <div class="composer-row">
-        <label id="dry-run-label">
-          <input type="checkbox" id="dry-run-check" />
-          Dry run
-        </label>
-        <button id="cancel-btn">■ Cancel</button>
+        <button id="new-chat-btn" class="toolbar-btn" title="New session">
+          <svg viewBox="0 0 16 16" width="10" height="10" fill="none"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          New Chat
+        </button>
+        <select id="session-select">
+          <option value="__current__">Current session</option>
+        </select>
+        <span class="composer-spacer"></span>
+        <button id="cancel-btn" class="toolbar-btn" title="Cancel current run">
+          <svg viewBox="0 0 16 16" width="9" height="9" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="1"/></svg>
+          Stop
+        </button>
+        <button id="send-btn" title="Run (Enter)">
+          <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2 8h12M9 3l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Run
+        </button>
       </div>
     </div>
   </div>
@@ -286,23 +667,41 @@
       conflict: "⚡", failed: "✗", repair: "↺"
     };
 
+    // ── Step icon SVGs ────────────────────────────────────────
+    const ICON_IDLE = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/></svg>`;
+    const ICON_SPIN = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4" stroke-dasharray="9 13" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 8 8" to="360 8 8" dur="0.9s" repeatCount="indefinite"/></circle></svg>`;
+    const ICON_DONE = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="6" fill="currentColor" opacity="0.12"/><path d="M5 8.2L7 10.2L11 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const ICON_ERR  = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="6" fill="currentColor" opacity="0.12"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+
     // ── DOM refs ──────────────────────────────────────────────
-    const history    = document.getElementById("history");
-    const emptyState = document.getElementById("empty-state");
-    const prompt     = document.getElementById("prompt");
-    const sendBtn    = document.getElementById("send-btn");
-    const cancelBtn  = document.getElementById("cancel-btn");
-    const dryRunChk  = document.getElementById("dry-run-check");
+    const historyEl    = document.getElementById("history");
+    const emptyState   = document.getElementById("empty-state");
+    const prompt       = document.getElementById("prompt");
+    const sendBtn      = document.getElementById("send-btn");
+    const cancelBtn    = document.getElementById("cancel-btn");
+    const newChatBtn   = document.getElementById("new-chat-btn");
+    const sessionSelEl = document.getElementById("session-select");
 
     // ── State ─────────────────────────────────────────────────
     let activeRun = null;
     let running   = false;
 
+    let sessions         = [];
+    let currentSession   = null;
+    let newChatPending   = false;
+    let currentRunReq    = "";
+    let savedHistoryHTML = null;
+    let viewingSessionId = null;
+
+    currentSession = { id: _uid(), label: "", ts: Date.now(), runs: [] };
+
     // ── Composer ──────────────────────────────────────────────
     function submit() {
       const text = prompt.value.trim();
       if (!text || running) { return; }
-      vscode.postMessage({ command: "run", request: text, dryRun: dryRunChk.checked });
+      if (viewingSessionId !== null) { switchToCurrent(); }
+      vscode.postMessage({ command: "run", request: text, dryRun: false, newChat: newChatPending });
+      newChatPending = false;
       prompt.value = "";
       autoResize();
     }
@@ -314,9 +713,14 @@
     prompt.addEventListener("input", autoResize);
     function autoResize() {
       prompt.style.height = "auto";
-      prompt.style.height = Math.min(prompt.scrollHeight, 120) + "px";
+      prompt.style.height = Math.min(prompt.scrollHeight, 130) + "px";
     }
     cancelBtn.addEventListener("click", () => vscode.postMessage({ command: "cancel" }));
+    newChatBtn.addEventListener("click", () => startNewSession(true));
+    sessionSelEl.addEventListener("change", () => {
+      const v = sessionSelEl.value;
+      if (v === "__current__") { switchToCurrent(); } else { switchToSession(v); }
+    });
 
     // ── Escape HTML ───────────────────────────────────────────
     function esc(s) {
@@ -324,6 +728,164 @@
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
+    }
+
+    // ── Session management ────────────────────────────────────
+    function _uid() {
+      return Math.random().toString(36).slice(2) + Date.now().toString(36);
+    }
+
+    function clearHistory() {
+      while (historyEl.firstChild) { historyEl.removeChild(historyEl.firstChild); }
+      emptyState.style.display = "";
+      historyEl.appendChild(emptyState);
+    }
+
+    function populateSessionDropdown() {
+      while (sessionSelEl.options.length > 1) { sessionSelEl.remove(1); }
+      for (const s of sessions) {
+        const opt = document.createElement("option");
+        opt.value = s.id;
+        const d = new Date(s.ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        const lbl = (s.label || "Session").slice(0, 42);
+        opt.textContent = `${d} — ${lbl}`;
+        sessionSelEl.appendChild(opt);
+      }
+      sessionSelEl.style.display = sessions.length > 0 ? "" : "none";
+      if (!viewingSessionId) { sessionSelEl.value = "__current__"; }
+    }
+
+    function updateCurrentLabel() {
+      if (sessionSelEl.options[0] && currentSession) {
+        sessionSelEl.options[0].textContent =
+          currentSession.label ? currentSession.label.slice(0, 42) : "Current session";
+      }
+    }
+
+    function persistSessions() {
+      vscode.postMessage({ command: "saveSessions", sessions });
+    }
+
+    function saveCurrentSession() {
+      if (!currentSession || currentSession.runs.length === 0) { return; }
+      const idx = sessions.findIndex(s => s.id === currentSession.id);
+      if (idx >= 0) { sessions[idx] = currentSession; }
+      else {
+        sessions.unshift(currentSession);
+        if (sessions.length > 30) { sessions.pop(); }
+      }
+      persistSessions();
+      populateSessionDropdown();
+    }
+
+    function startNewSession(withNewChat) {
+      saveCurrentSession();
+      currentSession = { id: _uid(), label: "", ts: Date.now(), runs: [] };
+      newChatPending = !!withNewChat;
+      viewingSessionId = null;
+      savedHistoryHTML = null;
+      clearHistory();
+      updateCurrentLabel();
+      sessionSelEl.value = "__current__";
+    }
+
+    function switchToSession(id) {
+      if (viewingSessionId === id) { return; }
+      if (viewingSessionId === null) { savedHistoryHTML = historyEl.innerHTML; }
+      viewingSessionId = id;
+      const s = sessions.find(x => x.id === id);
+      if (!s) { switchToCurrent(); return; }
+      while (historyEl.firstChild) { historyEl.removeChild(historyEl.firstChild); }
+      renderArchiveSession(s);
+      historyEl.scrollTop = 0;
+    }
+
+    function switchToCurrent() {
+      if (viewingSessionId === null) { return; }
+      viewingSessionId = null;
+      historyEl.innerHTML = savedHistoryHTML ?? "";
+      if (!savedHistoryHTML) { historyEl.appendChild(emptyState); }
+      savedHistoryHTML = null;
+      sessionSelEl.value = "__current__";
+    }
+
+    function renderArchiveSession(session) {
+      const hdr = document.createElement("div");
+      hdr.className = "archive-header";
+      const d = new Date(session.ts).toLocaleString(undefined, {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
+      });
+      hdr.innerHTML = `<strong>${esc(session.label || "Session")}</strong><span>${esc(d)}</span>`;
+      historyEl.appendChild(hdr);
+
+      if (!session.runs || session.runs.length === 0) {
+        const empty = document.createElement("div");
+        empty.style.cssText = "color:var(--dim);font-size:11px;padding:24px 8px;text-align:center";
+        empty.textContent = "No completed runs recorded for this session.";
+        historyEl.appendChild(empty);
+        return;
+      }
+
+      for (const run of session.runs) {
+        const card = document.createElement("div");
+        card.className = "archive-run";
+
+        const hdrEl = document.createElement("div");
+        hdrEl.className = "archive-run-header";
+
+        if (run.dryRun) {
+          const badge = document.createElement("span");
+          badge.className = "run-badge";
+          badge.textContent = "dry-run";
+          hdrEl.appendChild(badge);
+        }
+        const reqEl = document.createElement("div");
+        reqEl.className = "archive-request";
+        reqEl.textContent = run.request || "";
+        const timeEl = document.createElement("div");
+        timeEl.className = "archive-time";
+        timeEl.textContent = new Date(run.ts).toLocaleTimeString();
+        hdrEl.appendChild(reqEl);
+        hdrEl.appendChild(timeEl);
+        card.appendChild(hdrEl);
+
+        const statsEl = document.createElement("div");
+        statsEl.className = "archive-stats";
+        const ok = run.workersSucceeded === run.workersTotal;
+        statsEl.innerHTML =
+          `<span class="${ok ? "archive-stat-ok" : "archive-stat-warn"}">${ok ? "✓" : "⚠"} ${esc(run.workersSucceeded)}/${esc(run.workersTotal)} workers</span>` +
+          `<span style="color:var(--border)">·</span>` +
+          `<span>${esc(run.filesWritten)} file${run.filesWritten !== 1 ? "s" : ""} written</span>` +
+          `<span style="color:var(--border)">·</span>` +
+          `<span>${esc(run.diffLines)} diff lines</span>`;
+        card.appendChild(statsEl);
+
+        if (run.diagnosis) {
+          const diagEl = document.createElement("div");
+          diagEl.className = "archive-diagnosis";
+          diagEl.textContent = run.diagnosis.length > 220
+            ? run.diagnosis.slice(0, 220) + "…" : run.diagnosis;
+          card.appendChild(diagEl);
+        }
+
+        if (run.tickets && run.tickets.length > 0) {
+          const ticketsEl = document.createElement("div");
+          ticketsEl.className = "archive-tickets";
+          for (const t of run.tickets) {
+            const row = document.createElement("div");
+            row.className = "archive-ticket";
+            const d2 = (t.description || "").length > 70
+              ? t.description.slice(0, 70) + "…" : t.description;
+            row.innerHTML =
+              `<span class="archive-ticket-id">${esc(t.id)}</span>` +
+              `<span>${esc(d2)}</span>`;
+            ticketsEl.appendChild(row);
+          }
+          card.appendChild(ticketsEl);
+        }
+
+        historyEl.appendChild(card);
+      }
     }
 
     // ── Create run block ──────────────────────────────────────
@@ -336,17 +898,25 @@
       // Header
       const header = document.createElement("div");
       header.className = "run-header";
+
+      const promptIcon = document.createElement("span");
+      promptIcon.className = "run-prompt-icon";
+      promptIcon.textContent = "›";
+
       const promptEl = document.createElement("div");
       promptEl.className = "run-prompt";
       promptEl.textContent = request;
+
       const meta = document.createElement("div");
       meta.className = "run-meta";
-      meta.textContent = new Date().toLocaleTimeString();
+      meta.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+      header.appendChild(promptIcon);
       header.appendChild(promptEl);
       if (dryRun) {
         const badge = document.createElement("span");
         badge.className = "run-badge";
-        badge.textContent = "dry-run";
+        badge.textContent = "dry run";
         header.appendChild(badge);
       }
       header.appendChild(meta);
@@ -357,16 +927,19 @@
       stepCardsEl.className = "step-cards";
       block.appendChild(stepCardsEl);
 
-      // Status footer
+      // Run footer
+      const footer = document.createElement("div");
+      footer.className = "run-footer";
       const statusEl = document.createElement("div");
       statusEl.className = "run-status running";
-      statusEl.textContent = "Running…";
-      block.appendChild(statusEl);
+      statusEl.innerHTML = `<div class="run-status-dot"></div><span class="run-status-text">Running…</span>`;
+      footer.appendChild(statusEl);
+      block.appendChild(footer);
 
-      history.appendChild(block);
-      history.scrollTop = history.scrollHeight;
+      historyEl.appendChild(block);
+      historyEl.scrollTop = historyEl.scrollHeight;
 
-      // Ticker: update elapsed time on running workers
+      // Ticker
       const ticker = setInterval(() => {
         if (!running || !activeRun) { clearInterval(ticker); return; }
         const workerStep = activeRun.workerStepName && activeRun.stepCards[activeRun.workerStepName];
@@ -378,12 +951,9 @@
             anyRunning = true;
           }
         }
-        if (anyRunning) {
-          renderWorkers(activeRun.workers, workerStep.workerTbody);
-        }
-        // Update step live summary with worker counts
-        const ws  = Object.values(activeRun.workers);
-        const done = ws.filter(w => w.status === "approved" || w.status === "failed").length;
+        if (anyRunning) { renderWorkers(activeRun.workers, workerStep.workerTbody); }
+        const ws    = Object.values(activeRun.workers);
+        const done  = ws.filter(w => w.status === "approved" || w.status === "failed").length;
         const total = ws.length;
         if (total > 0 && activeRun.currentStepName === activeRun.workerStepName) {
           workerStep.liveEl.textContent = `${done}/${total} workers complete`;
@@ -394,8 +964,8 @@
         workers: {},
         stepCards: {},
         currentStepName: null,
-        workerStepName: null,   // which step owns the workers table
-        preStepLogs: [],        // buffered before first step event
+        workerStepName: null,
+        preStepLogs: [],
         stepCardsEl,
         statusEl,
         startTime: Date.now(),
@@ -410,11 +980,10 @@
       const card = document.createElement("div");
       card.className = "step-card";
 
-      // Header row
       const hdr = document.createElement("div");
       hdr.className = "step-card-header";
 
-      const iconEl  = document.createElement("span"); iconEl.className  = "step-icon";  iconEl.textContent  = "○";
+      const iconEl  = document.createElement("span"); iconEl.className  = "step-icon";  iconEl.innerHTML  = ICON_IDLE;
       const nameEl  = document.createElement("span"); nameEl.className  = "step-name";  nameEl.textContent  = stepName;
       const liveEl  = document.createElement("span"); liveEl.className  = "step-live";
       const countEl = document.createElement("span"); countEl.className = "step-count"; countEl.style.display = "none";
@@ -426,7 +995,6 @@
       hdr.appendChild(countEl);
       hdr.appendChild(arrowEl);
 
-      // Expandable body
       const bodyEl = document.createElement("div");
       bodyEl.className = "step-card-body";
       bodyEl.style.display = "none";
@@ -454,13 +1022,13 @@
     function activateStep(stepName, message) {
       if (!activeRun) { return; }
 
-      // Close the previous active step card
       if (activeRun.currentStepName) {
         const prev = activeRun.stepCards[activeRun.currentStepName];
         if (prev) {
           prev.el.classList.remove("step-active");
           prev.el.classList.add("step-done");
-          prev.iconEl.textContent = "✓";
+          prev.iconEl.innerHTML = ICON_DONE;
+          prev.liveEl.textContent = "";
           prev.bodyEl.style.display = "none";
           prev.arrowEl.style.transform = "";
         }
@@ -469,21 +1037,19 @@
       const step = getOrCreateStepCard(stepName);
       step.el.classList.add("step-active");
       step.el.classList.remove("step-done", "step-error");
-      step.iconEl.textContent = "◌";
+      step.iconEl.innerHTML = ICON_SPIN;
       if (message) { step.liveEl.textContent = message; }
 
-      // Auto-expand the new active step
       step.bodyEl.style.display = "";
       step.arrowEl.style.transform = "rotate(90deg)";
 
-      // Flush any buffered pre-step logs into this first step
       for (const [cls, text] of activeRun.preStepLogs) {
         _addLogLine(step, cls, text, false);
       }
       activeRun.preStepLogs = [];
 
       activeRun.currentStepName = stepName;
-      history.scrollTop = history.scrollHeight;
+      historyEl.scrollTop = historyEl.scrollHeight;
     }
 
     // ── Workers ───────────────────────────────────────────────
@@ -499,7 +1065,8 @@
       const table = document.createElement("table");
       table.className = "worker-table";
       table.innerHTML = `<thead><tr>
-        <th>Worker</th><th>Status</th>
+        <th>Worker</th>
+        <th style="text-align:center;width:28px"></th>
         <th style="text-align:right">Attempt</th>
         <th style="text-align:right">Elapsed</th>
         <th>Description</th>
@@ -508,7 +1075,6 @@
       table.appendChild(tbody);
       section.appendChild(table);
 
-      // Insert before the logs div
       step.bodyEl.insertBefore(section, step.logsEl);
       step.workersSection = section;
       step.workerTbody = tbody;
@@ -525,11 +1091,12 @@
         const desc = w.description.length > 48
           ? w.description.slice(0, 48) + "…" : w.description;
         const tr = document.createElement("tr");
+        tr.className = `status-${w.status}`;
         tr.innerHTML = `
-          <td>${esc(id)}</td>
-          <td class="status-${esc(w.status)}">${STATUS_ICON[w.status] || ""} ${esc(w.status)}</td>
-          <td style="text-align:right">${esc(w.attempt || "—")}</td>
-          <td style="text-align:right">${esc(elapsed)}</td>
+          <td style="font-family:var(--vscode-editor-font-family,monospace);font-size:10px">${esc(id)}</td>
+          <td style="text-align:center"><span class="status-pill">${STATUS_ICON[w.status] || ""}</span></td>
+          <td style="text-align:right;color:var(--dim)">${esc(w.attempt || "—")}</td>
+          <td style="text-align:right;color:var(--dim)">${esc(elapsed)}</td>
           <td>${esc(desc)}${w.detail
             ? `<div class="worker-detail">${esc(w.detail.slice(0, 50))}</div>` : ""}</td>
         `;
@@ -552,7 +1119,6 @@
         step.logsEl.scrollTop = step.logsEl.scrollHeight;
       }
 
-      // Update the one-line summary from action-level messages
       if (updateSummary && cls === "log-action") {
         const clean = text.replace(/^\S+\s+/, "").slice(0, 60);
         step.liveEl.textContent = clean + (clean.length >= 60 ? "…" : "");
@@ -563,59 +1129,75 @@
       if (!activeRun) { return; }
       const stepName = activeRun.currentStepName;
       if (!stepName) {
-        // Buffer non-debug pre-step logs for the first step
         if (cls !== "log-debug") { activeRun.preStepLogs.push([cls, text]); }
         return;
       }
       const step = activeRun.stepCards[stepName];
       if (!step) { return; }
       _addLogLine(step, cls, text, true);
-      history.scrollTop = history.scrollHeight;
+      historyEl.scrollTop = historyEl.scrollHeight;
     }
 
     // ── Result card ───────────────────────────────────────────
     function renderResultCard(ev) {
       if (!activeRun) { return; }
-      const isDry = ev.dry_run;
-      const allOk = ev.workers_succeeded === ev.workers_total;
+      const isDry  = ev.dry_run;
+      const allOk  = ev.workers_succeeded === ev.workers_total;
+      const nw     = ev.workers_succeeded;
+      const tw     = ev.workers_total;
 
       const card = document.createElement("div");
       card.className = "result-card";
 
+      // Build meta line: "3 files written · 142 diff lines · 2 tickets"
+      const metaParts = [];
+      if (isDry) {
+        metaParts.push(`${esc(String(ev.files_written))} file${ev.files_written !== 1 ? "s" : ""} staged (no writes)`);
+      } else {
+        metaParts.push(`${esc(String(ev.files_written))} file${ev.files_written !== 1 ? "s" : ""} written`);
+      }
+      metaParts.push(`${esc(String(ev.diff_lines))} diff lines`);
+      if (ev.tickets && ev.tickets.length > 0) {
+        metaParts.push(`${ev.tickets.length} ticket${ev.tickets.length !== 1 ? "s" : ""}`);
+      }
+
+      // Header
       const hdr = document.createElement("div");
-      hdr.className = "result-card-header" + (isDry ? " dry-run" : "");
-      hdr.textContent = isDry
-        ? "⚠ Dry run complete — no files written"
-        : allOk
-          ? `✓ ${ev.workers_succeeded} worker${ev.workers_succeeded !== 1 ? "s" : ""} succeeded`
-          : `⚠ ${ev.workers_succeeded}/${ev.workers_total} workers succeeded`;
+      const body = document.createElement("div");
+      body.className = "result-header-body";
+
+      if (isDry) {
+        hdr.className = "result-card-header dry-run";
+        hdr.innerHTML = `<svg width="20" height="20" viewBox="0 0 16 16" fill="none"><path d="M8 2L2 12h12L8 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><line x1="8" y1="7" x2="8" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="12" r="0.8" fill="currentColor"/></svg>`;
+        body.innerHTML = `<span class="result-header-title">Dry run complete</span>`
+                       + `<span class="result-header-meta">${metaParts.join(" · ")}</span>`;
+      } else if (allOk) {
+        hdr.className = "result-card-header ok";
+        hdr.innerHTML = `<svg width="20" height="20" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="6" fill="currentColor" opacity="0.12"/><path d="M5 8.2L7 10.2L11 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        body.innerHTML = `<span class="result-header-title">${esc(String(nw))} worker${nw !== 1 ? "s" : ""} succeeded</span>`
+                       + `<span class="result-header-meta">${metaParts.join(" · ")}</span>`;
+      } else {
+        hdr.className = "result-card-header partial";
+        hdr.innerHTML = `<svg width="20" height="20" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="6" fill="currentColor" opacity="0.12"/><path d="M8 5v3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11" r="0.8" fill="currentColor"/></svg>`;
+        body.innerHTML = `<span class="result-header-title">${esc(String(nw))} of ${esc(String(tw))} workers succeeded</span>`
+                       + `<span class="result-header-meta">${metaParts.join(" · ")}</span>`;
+      }
+      hdr.appendChild(body);
       card.appendChild(hdr);
 
-      const stats = document.createElement("div");
-      stats.className = "result-stats";
-      const addStat = (value, label) => {
-        const s = document.createElement("div");
-        s.className = "stat";
-        s.innerHTML = `<span class="stat-value">${esc(String(value))}</span>`
-                    + `<span class="stat-label">${esc(label)}</span>`;
-        stats.appendChild(s);
-      };
-      addStat(ev.workers_succeeded + "/" + ev.workers_total, "workers");
-      addStat(ev.files_written, isDry ? "files (staged)" : "files written");
-      addStat(ev.diff_lines, "diff lines");
-      addStat(ev.tickets ? ev.tickets.length : 0, "tickets");
-      card.appendChild(stats);
-
+      // Diagnosis
       if (ev.diagnosis) {
         const diag = document.createElement("div");
-        diag.className = "result-diagnosis";
-        diag.innerHTML = `<strong>Diagnosis</strong>${esc(ev.diagnosis)}`;
+        diag.className = "result-section";
+        diag.innerHTML = `<span class="result-section-label">Diagnosis</span>${esc(ev.diagnosis)}`;
         card.appendChild(diag);
       }
 
+      // Tickets
       if (ev.tickets && ev.tickets.length > 0) {
         const ticketsEl = document.createElement("div");
-        ticketsEl.className = "result-tickets";
+        ticketsEl.className = "result-section";
+        ticketsEl.innerHTML = `<span class="result-section-label">Tickets</span>`;
         for (const t of ev.tickets) {
           const row = document.createElement("div");
           row.className = "result-ticket";
@@ -629,7 +1211,8 @@
       }
 
       activeRun.statusEl.parentNode.insertBefore(card, activeRun.statusEl);
-      history.scrollTop = history.scrollHeight;
+      activeRun.statusEl.style.display = "none";
+      historyEl.scrollTop = historyEl.scrollHeight;
     }
 
     function setRunning(isRunning) {
@@ -646,10 +1229,10 @@
 
         case "_turbine_start":
           setRunning(true);
+          currentRunReq = ev.request || "";
           createRunBlock(ev.request, ev.dryRun);
           break;
 
-        // Each step gets its own collapsible card
         case "step":
           activateStep(ev.step, ev.message);
           break;
@@ -711,26 +1294,45 @@
 
         case "done": {
           if (!activeRun) { break; }
-          // Close the last step card
           if (activeRun.currentStepName) {
             const step = activeRun.stepCards[activeRun.currentStepName];
             if (step) {
               step.el.classList.remove("step-active");
               step.el.classList.add("step-done");
-              step.iconEl.textContent = "✓";
+              step.iconEl.innerHTML = ICON_DONE;
               step.bodyEl.style.display = "none";
               step.arrowEl.style.transform = "";
-              if (ev.summary) { step.liveEl.textContent = ev.summary; }
+              step.liveEl.textContent = "";
             }
             activeRun.currentStepName = null;
           }
           activeRun.statusEl.className = "run-status done";
-          activeRun.statusEl.textContent = ev.summary || "Done";
+          activeRun.statusEl.innerHTML = `<div class="run-status-dot"></div><span class="run-status-text">${esc(ev.summary || "Done")}</span>`;
           break;
         }
 
         case "done_detail":
           renderResultCard(ev);
+          if (currentSession) {
+            const run = {
+              id: _uid(),
+              ts: Date.now(),
+              request: currentRunReq,
+              dryRun: !!ev.dry_run,
+              workersSucceeded: ev.workers_succeeded || 0,
+              workersTotal: ev.workers_total || 0,
+              filesWritten: ev.files_written || 0,
+              diffLines: ev.diff_lines || 0,
+              diagnosis: ev.diagnosis || "",
+              tickets: (ev.tickets || []).map(t => ({ id: t.id, description: t.description || "" })),
+            };
+            if (!currentSession.label) {
+              currentSession.label = run.request;
+              updateCurrentLabel();
+            }
+            currentSession.runs.push(run);
+            saveCurrentSession();
+          }
           break;
 
         case "log":
@@ -743,13 +1345,14 @@
             clearInterval(activeRun.ticker);
             if (ev.code !== 0 && activeRun.statusEl.className !== "run-status done") {
               activeRun.statusEl.className = "run-status error";
-              activeRun.statusEl.textContent = `Exited with code ${ev.code}`;
+              activeRun.statusEl.innerHTML = `<div class="run-status-dot"></div><span class="run-status-text">Exited with code ${esc(String(ev.code))}</span>`;
               if (activeRun.currentStepName) {
                 const step = activeRun.stepCards[activeRun.currentStepName];
                 if (step) {
                   step.el.classList.remove("step-active");
                   step.el.classList.add("step-error");
-                  step.iconEl.textContent = "✗";
+                  step.iconEl.innerHTML = ICON_ERR;
+                  step.liveEl.textContent = "";
                 }
               }
             }
@@ -760,8 +1363,15 @@
         case "_turbine_cancel":
           appendLog("log-error", "Cancelled by user.");
           break;
+
+        case "_turbine_init":
+          sessions = ev.sessions || [];
+          populateSessionDropdown();
+          break;
       }
     });
+
+    vscode.postMessage({ command: "ready" });
   </script>
 </body>
 </html>

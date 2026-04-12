@@ -1,0 +1,15 @@
+{
+  "id": "task-010",
+  "description": "Extract duplicated non-negative check into a private helper",
+  "category": "single-file-edit",
+  "request": "Both validate_age and validate_score in validators.py repeat the same non-negative guard. Extract it into a private helper function `_require_non_negative(value)` and call it from both functions to eliminate the duplication.",
+  "snapshot": {
+    "validators.py": "def validate_age(value):\n    if value < 0:\n        raise ValueError('Value must be non-negative')\n    if value > 150:\n        raise ValueError('Age out of range')\n    return value\n\ndef validate_score(value):\n    if value < 0:\n        raise ValueError('Value must be non-negative')\n    if value > 100:\n        raise ValueError('Score out of range')\n    return value\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "validators.py"},
+    {"type": "content_contains", "file": "validators.py", "pattern": "def _\\w+"},
+    {"type": "valid_python",     "file": "validators.py"}
+  ],
+  "test_commands": []
+}

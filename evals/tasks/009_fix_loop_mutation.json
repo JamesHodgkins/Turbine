@@ -1,0 +1,14 @@
+{
+  "id": "task-009",
+  "description": "Fix remove_evens to not mutate list while iterating",
+  "category": "single-file-edit",
+  "request": "The function remove_evens modifies the list it is iterating over, which causes it to silently skip elements. Rewrite it so that it correctly removes all even numbers (any valid approach is fine — filter, list comprehension, or iterating a copy).",
+  "snapshot": {
+    "list_utils.py": "def remove_evens(numbers):\n    \"\"\"Remove all even numbers from the list in-place and return it.\"\"\"\n    for n in numbers:\n        if n % 2 == 0:\n            numbers.remove(n)\n    return numbers\n"
+  },
+  "assertions": [
+    {"type": "file_modified", "file": "list_utils.py"},
+    {"type": "valid_python",  "file": "list_utils.py"}
+  ],
+  "test_commands": []
+}
