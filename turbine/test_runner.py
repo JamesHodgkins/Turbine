@@ -222,7 +222,18 @@ class TestRunner:
             )
 
     def _build_repair_tasks(self, results: list[TestRunResult]) -> list[RepairTask]:
-        """Identify which workers are responsible for the failures."""
+        """Identify which workers are responsible for the failures.
+
+        Phase 12 — callee attribution
+        ------------------------------
+        Beyond the direct match (a worker's file appears in the traceback), we
+        also attribute to workers whose files are *imported by* any file in the
+        traceback.  When worker A changes a shared interface and worker B's test
+        file calls into it, the traceback mentions B's test file — but the actual
+        bug lives in A's callee file.  We detect this by scanning each failing
+        file for ``import``/``from … import`` statements and matching the
+        imported module names against worker file paths.
+        """
         if not self._worker_file_map:
             return []
 
@@ -235,16 +246,29 @@ class TestRunner:
         if not failed_paths:
             return []
 
+        # Phase 12: expand failed_paths to include files imported by any caller
+        # in the traceback.  This catches "callee changed the interface" failures.
+        callee_paths = self._expand_callee_paths(failed_paths)
+        all_failure_paths = failed_paths | callee_paths
+
         repair_tasks: list[RepairTask] = []
+        attributed: set[str] = set()  # avoid duplicate repair tasks
         for worker_id, files in self._worker_file_map.items():
             # Normalise worker file paths for comparison
             norm_files = [f.replace("\\", "/").lstrip("./") for f in files]
-            # Find which of this worker's files appear in the failure output
-            culprit_files = [
+            # Direct match: worker's file is mentioned in the traceback
+            direct = [
                 f for f, nf in zip(files, norm_files)
                 if any(nf in fp or fp in nf for fp in failed_paths)
             ]
-            if culprit_files:
+            # Callee match: worker's file is imported by a file in the traceback
+            callee = [
+                f for f, nf in zip(files, norm_files)
+                if f not in direct and any(nf in fp or fp in nf for fp in callee_paths)
+            ]
+            culprit_files = direct + callee
+            if culprit_files and worker_id not in attributed:
+                attributed.add(worker_id)
                 repair_tasks.append(RepairTask(
                     worker_id=worker_id,
                     ticket_description=self._ticket_descriptions.get(worker_id, ""),
@@ -253,3 +277,47 @@ class TestRunner:
                 ))
 
         return repair_tasks
+
+    def _expand_callee_paths(self, failed_paths: set[str]) -> set[str]:
+        """Return file paths imported by any file in *failed_paths*.
+
+        Scans each on-disk file that matches a path in *failed_paths* for
+        ``import X`` / ``from X import Y`` statements and converts the module
+        names to candidate relative paths (``x/y.py`` style).  Only returns
+        paths that actually exist under the project root, so speculative matches
+        don't pollute the attribution.
+        """
+        import re as _re
+        # Capture only the first dotted module name on each import line.
+        # We restrict the match to a single line by using [^\n] so the
+        # group does not greedily consume subsequent blank lines.
+        _import_re = _re.compile(
+            r"^[ \t]*(?:from[ \t]+([\w.]+)[ \t]+import|import[ \t]+([\w.][^\n,)]*?))"
+            r"(?:[ \t]*(?:,|\n|$))",
+            _re.MULTILINE,
+        )
+        callee_paths: set[str] = set()
+
+        for rel_path in failed_paths:
+            # Find a real file on disk that corresponds to this traceback path
+            abs_path = self._root / rel_path
+            if not abs_path.is_file():
+                # Try stripping a leading directory component in case the
+                # traceback path has extra prefix (e.g. "tests/../src/foo.py")
+                continue
+            try:
+                source = abs_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+
+            for m in _import_re.finditer(source):
+                module = (m.group(1) or m.group(2) or "").strip().split(",")[0].strip()
+                if not module:
+                    continue
+                # Convert "a.b.c" → candidate paths "a/b/c.py" and "a/b/c/__init__.py"
+                parts = module.replace(".", "/")
+                for candidate in (f"{parts}.py", f"{parts}/__init__.py"):
+                    if (self._root / candidate).is_file():
+                        callee_paths.add(candidate)
+
+        return callee_paths

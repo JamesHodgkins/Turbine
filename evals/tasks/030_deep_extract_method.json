@@ -1,0 +1,17 @@
+{
+  "id": "task-030",
+  "description": "[DEEP] Extract repeated validation logic into a private helper method",
+  "category": "deep-refactor",
+  "request": "In validator.py, the `validate_email` and `validate_username` functions both contain identical length-check logic (checking `len(value) < 3` and raising ValueError). Extract that repeated check into a private helper function `_check_min_length(value, field_name, min_len=3)` and call it from both validators. The public function signatures must not change.",
+  "snapshot": {
+    "validator.py": "def validate_email(email):\n    if len(email) < 3:\n        raise ValueError('email too short')\n    if '@' not in email:\n        raise ValueError('email must contain @')\n    return email.strip()\n\ndef validate_username(username):\n    if len(username) < 3:\n        raise ValueError('username too short')\n    if not username.isalnum():\n        raise ValueError('username must be alphanumeric')\n    return username.strip()\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "validator.py"},
+    {"type": "content_contains",     "file": "validator.py", "pattern": "def _check_min_length"},
+    {"type": "content_not_contains", "file": "validator.py", "pattern": "len\\(email\\) < 3"},
+    {"type": "content_not_contains", "file": "validator.py", "pattern": "len\\(username\\) < 3"},
+    {"type": "valid_python",         "file": "validator.py"}
+  ],
+  "test_commands": []
+}

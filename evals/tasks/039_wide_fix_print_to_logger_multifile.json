@@ -1,0 +1,21 @@
+{
+  "id": "task-039",
+  "description": "[WIDE] Replace print() with logger.warning() in two independent modules",
+  "category": "wide-multi-file",
+  "request": "In both auth.py and session.py, replace every `print(...)` call with `logger.warning(...)`. Each file should already have or should gain a module-level logger (`logger = logging.getLogger(__name__)`). Import logging if not already imported.",
+  "snapshot": {
+    "auth.py": "def login(username, password):\n    if not username:\n        print('Warning: empty username')\n        return False\n    if not password:\n        print('Warning: empty password')\n        return False\n    return True\n",
+    "session.py": "def create_session(user_id):\n    if user_id is None:\n        print('Warning: null user_id for session')\n        return None\n    return {'user_id': user_id, 'active': True}\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "auth.py"},
+    {"type": "file_modified",        "file": "session.py"},
+    {"type": "content_not_contains", "file": "auth.py",    "pattern": "print\\("},
+    {"type": "content_not_contains", "file": "session.py", "pattern": "print\\("},
+    {"type": "content_contains",     "file": "auth.py",    "pattern": "logger\\.warning"},
+    {"type": "content_contains",     "file": "session.py", "pattern": "logger\\.warning"},
+    {"type": "valid_python",         "file": "auth.py"},
+    {"type": "valid_python",         "file": "session.py"}
+  ],
+  "test_commands": []
+}

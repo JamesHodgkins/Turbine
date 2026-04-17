@@ -1,0 +1,19 @@
+{
+  "id": "task-040",
+  "description": "[WIDE] Add .strip() to string inputs in two independent parsers",
+  "category": "wide-multi-file",
+  "request": "Add `.strip()` calls to the string input parameters in both ini_parser.py and env_parser.py. In ini_parser.py, strip the `line` before processing. In env_parser.py, strip both the key and value after splitting on `=`. This prevents whitespace from silently breaking lookups.",
+  "snapshot": {
+    "ini_parser.py": "def parse_line(line):\n    if '=' not in line:\n        return None\n    key, value = line.split('=', 1)\n    return key, value\n",
+    "env_parser.py": "def parse_env_line(line):\n    if '=' not in line:\n        return None\n    key, value = line.split('=', 1)\n    return key, value\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "ini_parser.py"},
+    {"type": "file_modified",    "file": "env_parser.py"},
+    {"type": "content_contains", "file": "ini_parser.py", "pattern": "\\.strip\\(\\)"},
+    {"type": "content_contains", "file": "env_parser.py", "pattern": "\\.strip\\(\\)"},
+    {"type": "valid_python",     "file": "ini_parser.py"},
+    {"type": "valid_python",     "file": "env_parser.py"}
+  ],
+  "test_commands": []
+}

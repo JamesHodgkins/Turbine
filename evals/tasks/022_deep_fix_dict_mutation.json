@@ -1,0 +1,16 @@
+{
+  "id": "task-022",
+  "description": "[DEEP] Fix mutable default dict shared across calls",
+  "category": "deep-bug-fix",
+  "request": "Fix the bug in registry.py: the `register` function uses a mutable dict as a default argument, causing all calls to share the same registry. Change it so each call with no argument gets a fresh empty dict.",
+  "snapshot": {
+    "registry.py": "def register(name, registry={}):\n    registry[name] = True\n    return registry\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "registry.py"},
+    {"type": "content_not_contains", "file": "registry.py", "pattern": "registry=\\{\\}"},
+    {"type": "content_contains",     "file": "registry.py", "pattern": "None"},
+    {"type": "valid_python",         "file": "registry.py"}
+  ],
+  "test_commands": []
+}

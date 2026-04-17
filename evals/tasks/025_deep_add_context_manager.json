@@ -1,0 +1,17 @@
+{
+  "id": "task-025",
+  "description": "[DEEP] Add __enter__/__exit__ to make a class a context manager",
+  "category": "deep-refactor",
+  "request": "Add context-manager support to the Connection class in connection.py. Implement __enter__ (which should return self) and __exit__ (which should call self.close() regardless of whether an exception was raised). The existing connect() and close() methods must remain unchanged.",
+  "snapshot": {
+    "connection.py": "class Connection:\n    def __init__(self, host):\n        self.host = host\n        self._open = False\n\n    def connect(self):\n        self._open = True\n\n    def close(self):\n        self._open = False\n\n    def is_open(self):\n        return self._open\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "connection.py"},
+    {"type": "content_contains", "file": "connection.py", "pattern": "__enter__"},
+    {"type": "content_contains", "file": "connection.py", "pattern": "__exit__"},
+    {"type": "content_contains", "file": "connection.py", "pattern": "self\\.close"},
+    {"type": "valid_python",     "file": "connection.py"}
+  ],
+  "test_commands": []
+}

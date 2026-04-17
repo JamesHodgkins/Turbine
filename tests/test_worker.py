@@ -45,6 +45,7 @@ def _make_client(response_text: str) -> MagicMock:
             choices=[MagicMock(message=MagicMock(content=response_text))]
         )
     )
+    client.chat.stream_async = None  # disable streaming path in tests
     return client
 
 
@@ -183,6 +184,7 @@ class TestHandshake:
             MagicMock(choices=[MagicMock(message=MagicMock(content=file_block_conflict))]),
             MagicMock(choices=[MagicMock(message=MagicMock(content="No changes needed."))]),
         ])
+        client.chat.stream_async = None  # disable streaming path in tests
         worker = Worker(
             ticket=t2,
             vfs=vfs,
@@ -294,6 +296,7 @@ class TestRetry:
         client.chat.complete_async = AsyncMock(
             side_effect=[exc, success_response]
         )
+        client.chat.stream_async = None  # disable streaming path in tests
 
         worker = Worker(
             ticket=ticket,
@@ -318,6 +321,7 @@ class TestRetry:
 
         client = MagicMock()
         client.chat.complete_async = AsyncMock(side_effect=exc)
+        client.chat.stream_async = None  # disable streaming path in tests
 
         worker = Worker(
             ticket=ticket,

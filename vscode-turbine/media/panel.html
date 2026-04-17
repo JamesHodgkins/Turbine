@@ -362,6 +362,98 @@
 
     .worker-detail { font-size: 10px; color: var(--dim); margin-top: 2px; }
 
+    /* ── Worker action buttons (Phase 18) ────────────────────── */
+    .worker-actions {
+      display: flex;
+      gap: 4px;
+      margin-top: 4px;
+      flex-wrap: wrap;
+    }
+    .worker-action-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--fg-muted);
+      border-radius: var(--radius-sm);
+      font-size: 10px;
+      font-family: inherit;
+      padding: 2px 7px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: color 0.12s, border-color 0.12s, background 0.12s;
+    }
+    .worker-action-btn:hover { color: var(--fg); border-color: var(--accent); background: var(--accent-glow); }
+    .worker-action-btn.accept { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, var(--border)); }
+    .worker-action-btn.accept:hover { background: var(--green-dim); }
+    .worker-action-btn.reject { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, var(--border)); }
+    .worker-action-btn.reject:hover { background: var(--red-dim); }
+
+    /* ── Clarification widget (Phase 19) ───────────────────── */
+    .clarification-widget {
+      margin: 6px 8px 4px;
+      padding: 8px 10px;
+      border: 1px solid color-mix(in srgb, var(--yellow) 40%, var(--border));
+      border-radius: var(--radius-md);
+      background: var(--yellow-dim);
+    }
+    .clarification-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--yellow);
+      margin-bottom: 5px;
+    }
+    .clarification-question {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--fg);
+      margin-bottom: 7px;
+      line-height: 1.5;
+    }
+    .clarification-answered {
+      font-weight: 400;
+      color: var(--green);
+    }
+    .clarification-options { display: flex; flex-wrap: wrap; gap: 5px; }
+    .clarification-btn {
+      background: transparent;
+      border: 1px solid color-mix(in srgb, var(--yellow) 40%, var(--border));
+      color: var(--yellow);
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 3px 10px;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .clarification-btn:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--yellow) 15%, transparent);
+      border-color: var(--yellow);
+      color: var(--fg);
+    }
+    .clarification-btn:disabled { opacity: 0.45; cursor: default; }
+    .clarification-btn.selected {
+      background: color-mix(in srgb, var(--green) 18%, transparent);
+      border-color: var(--green);
+      color: var(--green);
+      opacity: 1;
+    }
+
+    /* Clickable file link */
+    .worker-file-link {
+      color: var(--cyan);
+      cursor: pointer;
+      font-size: 10px;
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 180px;
+      display: inline-block;
+    }
+    .worker-file-link:hover { color: var(--fg); }
+
     /* ── Logs ─────────────────────────────────────────────────────── */
     .step-logs {
       padding: 6px 10px 8px;
@@ -404,6 +496,42 @@
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50%       { opacity: 0.35; }
+    }
+
+    @keyframes turbine-spin {
+      /* SPOOL UP (0% - 35%): 
+        Simulates overcoming static friction and mass. 
+        Starts very heavy, then 'catches' speed.
+      */
+      0% { 
+        transform: rotate(0deg); 
+        animation-timing-function: cubic-bezier(0.5, 0, 0.8, 0.5); 
+      }
+      
+      /* STEADY STATE (35% - 65%): 
+        Constant high-speed rotation.
+      */
+      35% { 
+        transform: rotate(360deg); 
+        animation-timing-function: linear; 
+      }
+      
+      /* SPOOL DOWN (65% - 100%): 
+        Simulates a long coast-to-stop. 
+        The '0.1, 1' bezier creates a long, natural decay.
+      */
+      65% { 
+        transform: rotate(1080deg); 
+        animation-timing-function: cubic-bezier(0.2, 0.6, 0.4, 1); 
+      }
+      
+      100% { 
+        transform: rotate(1440deg); 
+      }
+    }
+    .turbine-spin {
+      transform-origin: 50% 50%;
+      animation: turbine-spin 6s infinite;
     }
 
     /* ── Result card ──────────────────────────────────────────────── */
@@ -669,7 +797,7 @@
 
     // ── Step icon SVGs ────────────────────────────────────────
     const ICON_IDLE = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/></svg>`;
-    const ICON_SPIN = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4" stroke-dasharray="9 13" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 8 8" to="360 8 8" dur="0.9s" repeatCount="indefinite"/></circle></svg>`;
+    const ICON_SPIN = `<svg class="turbine-spin" viewBox="0 0 250 250" fill="none" xmlns="http://www.w3.org/2000/svg"><g><path d="M123.232,80.717C147.789,80.717 167.726,100.654 167.726,125.21C167.726,149.767 147.789,169.704 123.232,169.704C98.675,169.704 78.738,149.767 78.738,125.21C78.738,100.654 98.675,80.717 123.232,80.717ZM123.232,106.546C112.931,106.546 104.568,114.909 104.568,125.21C104.568,135.512 112.931,143.875 123.232,143.875C133.534,143.875 141.897,135.512 141.897,125.21C141.897,114.909 133.534,106.546 123.232,106.546ZM148.804,9.454C156,7.12 163.737,11.067 166.07,18.263L180.727,63.45C183.061,70.646 179.114,78.383 171.919,80.717C164.723,83.05 156.986,79.103 154.652,71.908L139.996,26.72C137.662,19.525 141.609,11.788 148.804,9.454ZM20.999,65.195C20.998,57.63 27.138,51.487 34.702,51.486L82.207,51.475C89.772,51.473 95.915,57.613 95.917,65.178C95.918,72.742 89.778,78.885 82.214,78.887L34.709,78.898C27.144,78.899 21.001,72.759 20.999,65.195ZM34.62,203.959C27.424,201.629 23.473,193.894 25.804,186.697L40.44,141.503C42.771,134.306 50.506,130.356 57.702,132.686C64.899,135.017 68.849,142.752 66.519,149.949L51.883,195.143C49.552,202.339 41.817,206.29 34.62,203.959ZM170.825,233.785C166.389,239.912 157.813,241.286 151.685,236.85L113.205,208.992C107.078,204.557 105.704,195.98 110.14,189.853C114.576,183.726 123.152,182.352 129.28,186.788L167.76,214.645C173.887,219.081 175.26,227.657 170.825,233.785ZM241.191,113.412C245.652,119.521 244.314,128.102 238.205,132.564L199.841,160.58C193.732,165.042 185.151,163.704 180.689,157.595C176.228,151.486 177.566,142.904 183.675,138.443L222.039,110.426C228.148,105.965 236.73,107.303 241.191,113.412Z" fill="currentColor"></path></g></svg>`;
     const ICON_DONE = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="6" fill="currentColor" opacity="0.12"/><path d="M5 8.2L7 10.2L11 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     const ICON_ERR  = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="6" fill="currentColor" opacity="0.12"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
 
@@ -1092,16 +1220,54 @@
           ? w.description.slice(0, 48) + "…" : w.description;
         const tr = document.createElement("tr");
         tr.className = `status-${w.status}`;
+
+        // Phase 18: first file link for navigate-on-click
+        const firstFile = (w.files && w.files.length > 0) ? w.files[0] : null;
+        const fileCell = firstFile
+          ? `<span class="worker-file-link" data-file="${esc(firstFile)}" title="${esc(firstFile)}">${esc(firstFile.split("/").pop() || firstFile)}</span>`
+          : esc(desc);
+
+        // Phase 18: accept/reject/diff action buttons for completed workers
+        let actionsHtml = "";
+        if ((w.status === "approved" || w.status === "failed") && w.files && w.files.length > 0) {
+          const filesJson = esc(JSON.stringify(w.files));
+          actionsHtml = `
+            <div class="worker-actions">
+              <button class="worker-action-btn" data-action="diff" data-worker-id="${esc(id)}" data-files="${filesJson}">View Diff</button>
+              <button class="worker-action-btn accept" data-action="accept" data-files="${filesJson}">Accept</button>
+              <button class="worker-action-btn reject" data-action="reject" data-files="${filesJson}">Reject</button>
+            </div>`;
+        }
+
         tr.innerHTML = `
           <td style="font-family:var(--vscode-editor-font-family,monospace);font-size:10px">${esc(id)}</td>
           <td style="text-align:center"><span class="status-pill">${STATUS_ICON[w.status] || ""}</span></td>
           <td style="text-align:right;color:var(--dim)">${esc(w.attempt || "—")}</td>
           <td style="text-align:right;color:var(--dim)">${esc(elapsed)}</td>
-          <td>${esc(desc)}${w.detail
-            ? `<div class="worker-detail">${esc(w.detail.slice(0, 50))}</div>` : ""}</td>
+          <td>${fileCell}${w.detail
+            ? `<div class="worker-detail">${esc(w.detail.slice(0, 50))}</div>` : ""}${actionsHtml}</td>
         `;
         tbody.appendChild(tr);
       }
+
+      // Phase 18: wire up action buttons and file links after rendering
+      tbody.querySelectorAll("[data-action]").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const action  = btn.getAttribute("data-action");
+          const files   = JSON.parse(btn.getAttribute("data-files") || "[]");
+          const wId     = btn.getAttribute("data-worker-id") || "";
+          if (action === "diff")   { vscode.postMessage({ command: "showDiff",    workerId: wId, files }); }
+          if (action === "accept") { vscode.postMessage({ command: "acceptWorker", workerId: wId, files }); }
+          if (action === "reject") { vscode.postMessage({ command: "rejectWorker", workerId: wId, files }); }
+        });
+      });
+      tbody.querySelectorAll(".worker-file-link").forEach(link => {
+        link.addEventListener("click", (e) => {
+          e.stopPropagation();
+          vscode.postMessage({ command: "navigateFile", file: link.getAttribute("data-file") });
+        });
+      });
     }
 
     // ── Logging ───────────────────────────────────────────────
@@ -1135,6 +1301,70 @@
       const step = activeRun.stepCards[stepName];
       if (!step) { return; }
       _addLogLine(step, cls, text, true);
+      historyEl.scrollTop = historyEl.scrollHeight;
+    }
+
+    // ── Clarification widget (Phase 19) ──────────────────────
+    function renderClarificationWidget(ev) {
+      if (!activeRun) { return; }
+      const question = String(ev.question || "");
+      const options  = Array.isArray(ev.options) ? ev.options : [];
+
+      // Insert into the currently active step card, before the logs
+      const stepName = activeRun.currentStepName;
+      const step = stepName && activeRun.stepCards[stepName];
+
+      let container;
+      if (step) {
+        container = step.bodyEl;
+        // Make sure body is visible
+        if (step.bodyEl.style.display === "none") {
+          step.bodyEl.style.display = "";
+          step.arrowEl.style.transform = "rotate(90deg)";
+        }
+      } else {
+        // Fallback: append directly to the run block's step cards area
+        container = activeRun.stepCardsEl;
+      }
+
+      const widget = document.createElement("div");
+      widget.className = "clarification-widget";
+
+      const labelEl = document.createElement("div");
+      labelEl.className = "clarification-label";
+      labelEl.textContent = "Clarification needed";
+      widget.appendChild(labelEl);
+
+      const qEl = document.createElement("div");
+      qEl.className = "clarification-question";
+      qEl.textContent = question;
+      widget.appendChild(qEl);
+
+      const optsEl = document.createElement("div");
+      optsEl.className = "clarification-options";
+
+      for (const opt of options) {
+        const btn = document.createElement("button");
+        btn.className = "clarification-btn";
+        btn.textContent = opt;
+        btn.addEventListener("click", () => {
+          // Disable all option buttons
+          optsEl.querySelectorAll("button").forEach(b => { b.disabled = true; });
+          btn.classList.add("selected");
+          // Update question text to show the chosen answer inline
+          qEl.innerHTML = esc(question) + ' <span class="clarification-answered">→ ' + esc(opt) + '</span>';
+          // Send answer back to extension → written to process stdin
+          vscode.postMessage({ command: "clarificationAnswer", answer: opt });
+        });
+        optsEl.appendChild(btn);
+      }
+      widget.appendChild(optsEl);
+
+      if (step) {
+        container.insertBefore(widget, step.logsEl);
+      } else {
+        container.appendChild(widget);
+      }
       historyEl.scrollTop = historyEl.scrollHeight;
     }
 
@@ -1241,7 +1471,8 @@
           if (!activeRun) { break; }
           activeRun.workers[ev.ticket_id] = {
             description: ev.description, status: "running",
-            attempt: 0, startTs: Date.now(), elapsed: 0, detail: ""
+            attempt: 0, startTs: Date.now(), elapsed: 0, detail: "",
+            files: []  // Phase 18: filled in on worker_done
           };
           const step = ensureWorkersSection();
           if (step?.workerTbody) { renderWorkers(activeRun.workers, step.workerTbody); }
@@ -1273,12 +1504,15 @@
             w.status  = ev.success ? "approved" : "failed";
             w.elapsed = (Date.now() - w.startTs) / 1000;
             w.detail  = ev.detail || "";
+            w.files   = ev.files || [];  // Phase 18: store modified file list
             const ws = activeRun.workerStepName && activeRun.stepCards[activeRun.workerStepName];
             if (ws?.workerTbody) { renderWorkers(activeRun.workers, ws.workerTbody); }
           }
+          const fileHint = (ev.files && ev.files.length > 0)
+            ? ` (${ev.files.length} file${ev.files.length !== 1 ? "s" : ""})` : "";
           appendLog(
             ev.success ? "log-action" : "log-error",
-            `${ev.ticket_id} ${ev.success ? "✓ approved" : "✗ failed"}${ev.detail ? " — " + ev.detail : ""}`
+            `${ev.ticket_id} ${ev.success ? "✓ approved" : "✗ failed"}${ev.detail ? " — " + ev.detail : ""}${fileHint}`
           );
           break;
         }
@@ -1337,6 +1571,10 @@
 
         case "log":
           appendLog(`log-${ev.level || "debug"}`, ev.message);
+          break;
+
+        case "clarification_request":
+          renderClarificationWidget(ev);
           break;
 
         case "_turbine_exit":

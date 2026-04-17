@@ -1,0 +1,17 @@
+{
+  "id": "task-023",
+  "description": "[DEEP] Refactor bare attribute to @property with validation",
+  "category": "deep-refactor",
+  "request": "In temperature.py, refactor the `celsius` attribute on the Temperature class into a @property with a setter that raises ValueError when the value is below -273.15 (absolute zero). Keep the attribute name `celsius` so existing code using `.celsius = x` still works.",
+  "snapshot": {
+    "temperature.py": "class Temperature:\n    def __init__(self, celsius=0.0):\n        self.celsius = celsius\n\n    def to_fahrenheit(self):\n        return self.celsius * 9 / 5 + 32\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "temperature.py"},
+    {"type": "content_contains", "file": "temperature.py", "pattern": "@property"},
+    {"type": "content_contains", "file": "temperature.py", "pattern": "ValueError"},
+    {"type": "content_contains", "file": "temperature.py", "pattern": "-273"},
+    {"type": "valid_python",     "file": "temperature.py"}
+  ],
+  "test_commands": []
+}

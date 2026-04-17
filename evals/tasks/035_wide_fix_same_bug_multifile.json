@@ -1,0 +1,21 @@
+{
+  "id": "task-035",
+  "description": "[WIDE] Fix the same integer-division bug in two independent parsers",
+  "category": "wide-multi-file",
+  "request": "Both csv_parser.py and tsv_parser.py have the same bug: they compute an average using `/` (float division) then compare with `==` to an integer. Change both to use integer division `//` for the average calculation so the comparison works correctly.",
+  "snapshot": {
+    "csv_parser.py": "def average_column(rows, col):\n    total = sum(int(row[col]) for row in rows)\n    avg = total / len(rows)\n    return avg\n",
+    "tsv_parser.py": "def average_field(records, field):\n    total = sum(int(r[field]) for r in records)\n    avg = total / len(records)\n    return avg\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "csv_parser.py"},
+    {"type": "file_modified",        "file": "tsv_parser.py"},
+    {"type": "content_contains",     "file": "csv_parser.py", "pattern": "//"},
+    {"type": "content_contains",     "file": "tsv_parser.py", "pattern": "//"},
+    {"type": "content_not_contains", "file": "csv_parser.py", "pattern": "total / len"},
+    {"type": "content_not_contains", "file": "tsv_parser.py", "pattern": "total / len"},
+    {"type": "valid_python",         "file": "csv_parser.py"},
+    {"type": "valid_python",         "file": "tsv_parser.py"}
+  ],
+  "test_commands": []
+}

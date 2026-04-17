@@ -1,0 +1,15 @@
+{
+  "id": "task-021",
+  "description": "[DEEP] Fix missing base case in recursive factorial",
+  "category": "deep-bug-fix",
+  "request": "Fix the bug in factorial.py: the recursive function has no base case and will recurse forever. Add the correct base case so that factorial(0) returns 1 and factorial(5) returns 120.",
+  "snapshot": {
+    "factorial.py": "def factorial(n):\n    return n * factorial(n - 1)\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "factorial.py"},
+    {"type": "content_contains", "file": "factorial.py", "pattern": "return 1"},
+    {"type": "valid_python",     "file": "factorial.py"}
+  ],
+  "test_commands": []
+}

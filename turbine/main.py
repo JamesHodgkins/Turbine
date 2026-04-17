@@ -19,6 +19,8 @@ from turbine.git_integration import GitIntegration
 from turbine.json_ui import JsonEventUI
 from turbine.logger import TurbineLogger
 from turbine.manager import Manager
+from turbine.cost_tracker import BudgetExceededError
+from turbine.project_config import load_project_config
 from turbine.tree_mapper import TreeMapper
 from turbine.ui import TurbineUI
 
@@ -117,10 +119,57 @@ async def run(
     no_branch: bool = False,
     chat_id: str | None = None,
     new_chat: bool = False,
+    static_check: str | None = None,
+    budget: float | None = None,
+    model: str | None = None,
+    max_workers: int | None = None,
+    interactive: bool = False,
+    mode: str | None = None,
+    deep_max_iterations: int | None = None,
 ) -> None:
     api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key:
         raise EnvironmentError("MISTRAL_API_KEY not set. Add it to your .env file.")
+
+    # Phase 17: load project config file, then apply CLI overrides on top.
+    try:
+        project_cfg = load_project_config(target)
+    except ValueError as exc:
+        # Bad TOML — surface the error but don't abort; use empty defaults.
+        import warnings
+        warnings.warn(str(exc), stacklevel=2)
+        from turbine.project_config import ProjectConfig
+        project_cfg = ProjectConfig()
+
+    merged = project_cfg.apply_cli_overrides(
+        model=model,
+        max_workers=max_workers,
+        test_commands=test_commands,
+        budget=budget,
+        static_check=static_check,
+        interactive=interactive if interactive else None,
+    )
+    resolved = merged.resolve()
+
+    # Unpack resolved values for use throughout this function.
+    effective_model = resolved.model
+    effective_max_workers = resolved.max_workers
+    effective_test_commands = resolved.test_commands
+    effective_budget = resolved.budget
+    effective_static_check = resolved.static_check
+    effective_interactive = resolved.interactive
+
+    # Phase 20: resolve pipeline mode override
+    from turbine.manager import PipelineMode
+    effective_mode_override: PipelineMode | None = None
+    if mode is not None:
+        try:
+            effective_mode_override = PipelineMode(mode.lower())
+        except ValueError:
+            import warnings
+            warnings.warn(f"Unknown --mode value {mode!r}; ignoring.", stacklevel=2)
+
+    effective_deep_max_iterations = deep_max_iterations if deep_max_iterations is not None else 20
 
     # --json-events: create the UI first so the logger can forward to it immediately
     if json_events:
@@ -132,9 +181,9 @@ async def run(
     json_ui = ui if json_events else None
     log = TurbineLogger(ui=json_ui)
 
-    # Step 1: Discovery
+    # Step 1: Discovery (Phase 17: pass config ignore_patterns to mapper)
     log.thinking(f"Mapping project tree at: {target}")
-    mapper = TreeMapper(target)
+    mapper = TreeMapper(target, extra_ignore_patterns=resolved.ignore_patterns)
     tree = mapper.map()
     log.action(f"Tree mapped — {len(tree.files)} files found.")
     log.debug(tree.summary())
@@ -169,7 +218,9 @@ async def run(
         user_request=request,
         project_root=target,
         api_key=api_key,
-        test_commands=test_commands or [],
+        model=effective_model,
+        max_workers=effective_max_workers,
+        test_commands=effective_test_commands,
         dry_run=dry_run,
         review=review,
         ui=ui,
@@ -177,11 +228,19 @@ async def run(
         git=git,
         chat_id=chat_id,
         json_ui=json_ui,
+        static_check=effective_static_check,
+        budget=effective_budget,
+        interactive=effective_interactive,
+        mode_override=effective_mode_override,
     )
+    manager._deep_max_iterations = effective_deep_max_iterations
 
     try:
         with ui:
             await manager.run()
+    except BudgetExceededError as exc:
+        log.error(str(exc))
+        log.action(manager._cost_tracker.report())
     finally:
         # Phase 22: Always release lock on exit (clean or crash)
         git.release_lock()
@@ -211,7 +270,14 @@ def _eval_main() -> None:
     import os
     from pathlib import Path
 
-    from turbine.eval_runner import EvalRunner, print_eval_report
+    from turbine.eval_runner import (
+        EvalRunner,
+        compare_to_baseline,
+        load_baseline,
+        print_baseline_report,
+        print_eval_report,
+        save_baseline,
+    )
 
     parser = argparse.ArgumentParser(
         prog="turbine eval",
@@ -240,6 +306,17 @@ def _eval_main() -> None:
         metavar="N",
         help="Max tasks to run in parallel (default: 1)",
     )
+    parser.add_argument(
+        "--baseline",
+        metavar="FILE",
+        help="Compare results against this baseline JSON file; exit 1 on regression",
+    )
+    parser.add_argument(
+        "--save-baseline",
+        metavar="FILE",
+        dest="save_baseline",
+        help="Save current results as a new baseline JSON file",
+    )
     args = parser.parse_args(sys.argv[2:])
 
     api_key = os.getenv("MISTRAL_API_KEY")
@@ -264,8 +341,31 @@ def _eval_main() -> None:
     results = asyncio.run(runner.run(tasks))
     print_eval_report(results)
 
-    if not all(r.passed for r in results):
-        sys.exit(1)
+    # Phase 13 gate: compare against stored baseline and/or save a new one.
+    exit_code = 0
+
+    if args.baseline:
+        baseline_path = Path(args.baseline)
+        try:
+            baseline = load_baseline(baseline_path)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        regressions = compare_to_baseline(results, baseline)
+        print_baseline_report(regressions)
+        if regressions:
+            exit_code = 1
+
+    if args.save_baseline:
+        save_path = Path(args.save_baseline)
+        save_baseline(results, save_path)
+        print(f"Baseline saved to '{save_path}'.")
+
+    if exit_code == 0 and not all(r.passed for r in results):
+        exit_code = 1
+
+    if exit_code:
+        sys.exit(exit_code)
 
 
 def _purge_main() -> None:
@@ -329,6 +429,57 @@ def _purge_main() -> None:
     log.action("Purge complete.")
 
 
+def _init_main() -> None:
+    """Entry point for ``turbine init [dir]``."""
+    import argparse
+
+    from turbine.project_config import find_config_file, scaffold_config
+
+    parser = argparse.ArgumentParser(
+        prog="turbine init",
+        description=(
+            "Scaffold a starter turbine.toml in a project directory. "
+            "Detects the project type (Python, Node, TypeScript, Rust, Go) "
+            "and writes sensible commented-out defaults."
+        ),
+    )
+    parser.add_argument(
+        "target",
+        nargs="?",
+        default=".",
+        help="Path to the project root (default: current directory)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing turbine.toml",
+    )
+    args = parser.parse_args(sys.argv[2:])
+
+    from pathlib import Path
+    target = Path(args.target).resolve()
+
+    if not target.is_dir():
+        print(f"Error: {target} is not a directory.", file=sys.stderr)
+        sys.exit(1)
+
+    existing = find_config_file(target)
+    if existing and not args.force:
+        print(
+            f"turbine.toml already exists at {existing}\n"
+            "Use --force to overwrite.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        dest = scaffold_config(target, force=args.force)
+        print(f"Created {dest}")
+    except FileExistsError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
 def main() -> None:
     # Load API key from config file before anything else (env var takes priority).
     _load_config()
@@ -344,6 +495,10 @@ def main() -> None:
 
     if len(sys.argv) > 1 and sys.argv[1] == "purge":
         _purge_main()
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "init":
+        _init_main()
         return
 
     import argparse
@@ -394,6 +549,65 @@ def main() -> None:
             "from the project's base branch, fully isolated from prior sessions."
         ),
     )
+    static_group = parser.add_mutually_exclusive_group()
+    static_group.add_argument(
+        "--static-check", metavar="CMD", dest="static_check", default=None,
+        help=(
+            "Static-check command to run after commit and before tests "
+            "(e.g. 'ruff check .' or 'mypy --no-error-summary .'). "
+            "Defaults to auto-detecting from pyproject.toml / tsconfig.json."
+        ),
+    )
+    static_group.add_argument(
+        "--no-static-check", action="store_true", dest="no_static_check",
+        help="Disable the static-check step entirely.",
+    )
+    parser.add_argument(
+        "--budget", metavar="USD", type=float, default=None, dest="budget",
+        help=(
+            "Abort the run with a clear message if the estimated LLM spend "
+            "reaches this value in USD (e.g. --budget 0.50)."
+        ),
+    )
+    parser.add_argument(
+        "--model", metavar="NAME", default=None, dest="model",
+        help=(
+            "Mistral model name to use (e.g. 'mistral-large-latest'). "
+            "Overrides turbine.toml and the built-in default."
+        ),
+    )
+    parser.add_argument(
+        "--max-workers", metavar="N", type=int, default=None, dest="max_workers",
+        help=(
+            "Maximum number of parallel workers. "
+            "Overrides turbine.toml and the built-in default of 4."
+        ),
+    )
+    parser.add_argument(
+        "--interactive", action="store_true", dest="interactive",
+        help=(
+            "Enable the clarification gate: if the investigator finds the request "
+            "genuinely ambiguous, Turbine pauses and asks a question on stdin before "
+            "proceeding.  Without this flag the best-guess plan is used instead."
+        ),
+    )
+    parser.add_argument(
+        "--mode", metavar="MODE", default=None, dest="mode",
+        choices=["wide", "deep"],
+        help=(
+            "Override the automatic pipeline mode selection. "
+            "'wide' uses parallel workers (default for 2+ tickets); "
+            "'deep' uses a sequential tool-calling agent (default for 1 ticket)."
+        ),
+    )
+    parser.add_argument(
+        "--deep-max-iterations", metavar="N", type=int, default=None,
+        dest="deep_max_iterations",
+        help=(
+            "Maximum tool-calling iterations for Deep Mode (default: 20). "
+            "Exhaustion forces --review so changes can be inspected."
+        ),
+    )
     args = parser.parse_args()
 
     asyncio.run(run(
@@ -408,6 +622,13 @@ def main() -> None:
         args.no_branch,
         args.chat_id,
         args.new_chat,
+        static_check="" if args.no_static_check else args.static_check,
+        budget=args.budget,
+        model=args.model,
+        max_workers=args.max_workers,
+        interactive=args.interactive,
+        mode=args.mode,
+        deep_max_iterations=args.deep_max_iterations,
     ))
 
 

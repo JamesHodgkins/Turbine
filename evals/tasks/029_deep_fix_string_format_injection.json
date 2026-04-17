@@ -1,0 +1,16 @@
+{
+  "id": "task-029",
+  "description": "[DEEP] Fix SQL injection by switching to parameterised query",
+  "category": "deep-bug-fix",
+  "request": "Fix the security bug in db.py: the `find_user` function constructs a SQL query using string formatting, making it vulnerable to SQL injection. Change it to use a parameterised query with a `?` placeholder and pass the value as the second argument to `cursor.execute`.",
+  "snapshot": {
+    "db.py": "def find_user(cursor, username):\n    query = \"SELECT * FROM users WHERE username = '\" + username + \"'\"\n    cursor.execute(query)\n    return cursor.fetchone()\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "db.py"},
+    {"type": "content_not_contains", "file": "db.py", "pattern": "\\+ username \\+"},
+    {"type": "content_contains",     "file": "db.py", "pattern": "\\?"},
+    {"type": "valid_python",         "file": "db.py"}
+  ],
+  "test_commands": []
+}

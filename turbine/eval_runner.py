@@ -407,6 +407,90 @@ def print_eval_report(results: list[EvalResult], console: Console | None = None)
 
 
 # ---------------------------------------------------------------------------
+# Baseline comparison — Phase 13 gate
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BaselineRegression:
+    """A task whose score dropped compared to the stored baseline."""
+    task_id: str
+    baseline_score: float
+    current_score: float
+
+    @property
+    def delta(self) -> float:
+        return self.current_score - self.baseline_score
+
+
+def save_baseline(results: list[EvalResult], path: Path) -> None:
+    """Persist *results* as a baseline JSON file at *path*.
+
+    Format: ``{"task-id": score_float, ...}``
+    """
+    data = {r.task.id: r.score for r in results}
+    path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def load_baseline(path: Path) -> dict[str, float]:
+    """Load a baseline file produced by :func:`save_baseline`.
+
+    Returns ``{task_id: score}`` or raises ``ValueError`` on parse failure.
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Could not read baseline '{path}': {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError(f"Baseline '{path}' is not a JSON object")
+    return {k: float(v) for k, v in raw.items()}
+
+
+def compare_to_baseline(
+    results: list[EvalResult],
+    baseline: dict[str, float],
+) -> list[BaselineRegression]:
+    """Return regressions: tasks whose score is strictly lower than the baseline.
+
+    Tasks not present in the baseline are ignored (new tasks can't regress).
+    """
+    regressions: list[BaselineRegression] = []
+    for r in results:
+        if r.task.id not in baseline:
+            continue
+        if r.score < baseline[r.task.id]:
+            regressions.append(
+                BaselineRegression(
+                    task_id=r.task.id,
+                    baseline_score=baseline[r.task.id],
+                    current_score=r.score,
+                )
+            )
+    return regressions
+
+
+def print_baseline_report(
+    regressions: list[BaselineRegression],
+    console: Console | None = None,
+) -> None:
+    """Print a regression report.  Prints nothing when *regressions* is empty."""
+    if not regressions:
+        return
+    c = console or Console()
+    c.print()
+    c.rule("[bold red]Baseline Regressions[/bold red]")
+    for reg in regressions:
+        c.print(
+            f"  [bold red]REGRESSED[/bold red] {reg.task_id}: "
+            f"{reg.baseline_score * 100:.0f}% → {reg.current_score * 100:.0f}% "
+            f"(Δ {reg.delta * 100:+.0f}%)"
+        )
+    c.print(
+        f"\n[bold red]{len(regressions)} regression(s) detected.[/bold red] "
+        "Run with [bold]--save-baseline[/bold] to update after a deliberate change."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

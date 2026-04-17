@@ -1,0 +1,21 @@
+{
+  "id": "task-037",
+  "description": "[WIDE] Rename method `process` to `handle` in two unrelated classes",
+  "category": "wide-multi-file",
+  "request": "Rename the method `process` to `handle` in both the EventHandler class in event_handler.py and the RequestHandler class in request_handler.py. These classes are completely independent. Update the method definition in each file.",
+  "snapshot": {
+    "event_handler.py": "class EventHandler:\n    def process(self, event):\n        print(f'Handling event: {event}')\n        return True\n\n    def reset(self):\n        pass\n",
+    "request_handler.py": "class RequestHandler:\n    def process(self, request):\n        return {'status': 'ok', 'request': request}\n\n    def error(self, msg):\n        return {'status': 'error', 'message': msg}\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "event_handler.py"},
+    {"type": "file_modified",        "file": "request_handler.py"},
+    {"type": "content_contains",     "file": "event_handler.py",   "pattern": "def handle"},
+    {"type": "content_not_contains", "file": "event_handler.py",   "pattern": "def process"},
+    {"type": "content_contains",     "file": "request_handler.py", "pattern": "def handle"},
+    {"type": "content_not_contains", "file": "request_handler.py", "pattern": "def process"},
+    {"type": "valid_python",         "file": "event_handler.py"},
+    {"type": "valid_python",         "file": "request_handler.py"}
+  ],
+  "test_commands": []
+}

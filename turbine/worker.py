@@ -82,6 +82,10 @@ Rules:
     unreachable code, or stray statements.
   - Follow the pseudocode plan step-by-step — do not skip steps or collapse them.
   - If you have nothing to change or create, output nothing (an empty response).
+  - If you are genuinely uncertain about your changes — e.g. you lack sufficient
+    context, the request is ambiguous, or you cannot verify correctness — add the
+    literal tag <uncertain/> anywhere in your response (outside a file block).
+    The Manager will flag your result for manual review.
 """
 
 
@@ -104,7 +108,7 @@ WORKER_USER_TEMPLATE = """\
 
 ## Files
 {file_contents}
-"""
+{context_section}"""
 
 CONSTRAINT_TEMPLATE = """\
 Your previous proposal was rejected because it would conflict with changes already
@@ -117,6 +121,27 @@ applied. You MUST base your new proposal on these updated contents — not the o
 file you were given at the start.  Write your complete new file(s) using the same
 <file path="..."> format, building on top of the current state shown here.
 
+{current_files}
+"""
+
+# Phase 12: targeted repair prompt — used on repair round 1 (constraint-only).
+# The worker is asked only to fix the specific test failures, not to re-generate
+# the entire file from scratch.  This is cheaper and less likely to regress
+# unrelated code.
+REPAIR_CONSTRAINT_TEMPLATE = """\
+The following test failures occurred after your last changes were committed.
+Your task is to produce the MINIMAL fix to make these tests pass.
+
+## Test failures
+```
+{failure_output}
+```
+
+Return ONLY the file(s) that need changing, using the same <file path="..."> format.
+Do NOT rewrite files that are not implicated in the failures above.
+The current file contents are shown below for reference.
+
+## Current file contents
 {current_files}
 """
 
@@ -134,21 +159,25 @@ inside a <scoped_edits path="relative/path/to/file.py"> … </scoped_edits>
 block.  Each edit is a JSON object with ONE of these two forms:
 
   Function/class scope:
-    { "function": "<exact_name>", "replacement": "<complete new body>" }
+    { "function": "myMethodName", "replacement": "<complete new definition>" }
 
   Line range:
     { "lines": [<start_1based>, <end_1based>], "replacement": "<new text>" }
 
-Rules for scoped edits:
-  - Use "function" form whenever possible — it is more robust.
-  - "replacement" is the COMPLETE new text for that region (all lines).
-    To delete a region, use an empty string "".
-  - Do NOT include the def/class signature line in "replacement" for
-    function-scoped edits — it is automatically preserved.
-    Wait — CORRECTION: include the ENTIRE definition including the signature.
+IMPORTANT — "function" value rules:
+  - "function" must be the BARE identifier name only (e.g. "toString", "add",
+    "Vector2"). Do NOT include docstrings, signatures, braces, or any other
+    text — just the plain name string.
+  - "replacement" is the COMPLETE new text for the entire definition, including
+    its signature/header line, body, and closing brace (for JS) or all indented
+    lines (for Python). Include everything from the first line of the definition
+    to the last.
+  - To add a NEW function that does not yet exist, use the "lines" form and
+    insert at the appropriate line number.
+  - To delete a definition, use an empty "replacement": "".
   - Edits must not overlap each other.
-  - Keep all existing functions/classes that you are not changing — omit them
-    from the edit list entirely (they are preserved automatically).
+  - Keep all existing functions/classes you are not changing — omit them from
+    the edit list (they are preserved automatically).
 
 For files NOT marked [LARGE FILE], continue using the normal
 <file path="..."> complete-content format.
@@ -291,6 +320,7 @@ class Worker:
     ui: object | None = None   # turbine.ui.TurbineUI — optional, typed as object to avoid circular import
     verbose: bool = False
     json_ui: object | None = None   # turbine.json_ui.JsonEventUI — forwarded to TurbineLogger
+    cost_tracker: object | None = None  # turbine.cost_tracker.CostTracker — Phase 15
 
     def __post_init__(self) -> None:
         self.log = TurbineLogger(ui=self.json_ui)
@@ -301,6 +331,8 @@ class Worker:
             for rel in self.ticket.relevant_files
             if self._is_large_file(rel)
         }
+        # Phase 10: set of paths that are read-only context (must not be written)
+        self._context_file_set: frozenset[str] = frozenset(self.ticket.context_files)
 
     # ------------------------------------------------------------------
     # Large-file helpers (Phase 9)
@@ -315,7 +347,11 @@ class Worker:
     # Public entry point
     # ------------------------------------------------------------------
 
-    async def run(self, repair_feedback: str = "") -> WorkerResult:
+    async def run(
+        self,
+        repair_feedback: str = "",
+        constraint_only: bool = False,
+    ) -> WorkerResult:
         """Run the handshake loop and return a WorkerResult.
 
         Parameters
@@ -324,19 +360,35 @@ class Worker:
             When non-empty, this is test-failure output from a previous verify
             cycle.  It is prepended to the initial user message so the LLM
             knows what broke and can fix it before re-proposing.
+        constraint_only:
+            Phase 12 — graduated repair strategy.  When ``True``, use a
+            targeted prompt that asks for the MINIMAL fix to failing tests
+            rather than regenerating the full file from scratch.  Used on
+            repair round 1; round 2 falls back to the full re-run.
         """
         self.log.thinking(f"Worker [{self.ticket.id}] — starting: {self.ticket.description}")
         if self.ui:
             self.ui.on_worker_start(self.ticket.id, self.ticket.description)
 
         file_contents = self._build_file_contents()
-        initial_user = WORKER_USER_TEMPLATE.format(
-            description=self.ticket.description,
-            plan=self.ticket.context or "(no plan provided — use your best judgement)",
-            file_contents=file_contents,
-        )
+        context_section = self._build_context_file_contents()
 
-        if repair_feedback:
+        # Phase 12: on constraint-only repair rounds, use a targeted prompt
+        # instead of the full task template.
+        if repair_feedback and constraint_only:
+            initial_user = REPAIR_CONSTRAINT_TEMPLATE.format(
+                failure_output=repair_feedback,
+                current_files=file_contents,
+            )
+        else:
+            initial_user = WORKER_USER_TEMPLATE.format(
+                description=self.ticket.description,
+                plan=self.ticket.context or "(no plan provided — use your best judgement)",
+                file_contents=file_contents,
+                context_section=context_section,
+            )
+
+        if repair_feedback and not constraint_only:
             initial_user = (
                 "## Test failures from previous attempt (you must fix these)\n"
                 f"```\n{repair_feedback}\n```\n\n"
@@ -386,6 +438,15 @@ class Worker:
                 )
 
             # -------------------------------------------------------
+            # Phase 12: detect <uncertain/> confidence signal
+            # -------------------------------------------------------
+            is_uncertain = bool(re.search(r"<uncertain\s*/>", assistant_text))
+            if is_uncertain:
+                self.log.thinking(
+                    f"Worker [{self.ticket.id}] — flagged output as uncertain."
+                )
+
+            # -------------------------------------------------------
             # Phase 9: parse scoped-edit blocks for large files, then
             # fall back to complete-content blocks for the rest.
             # -------------------------------------------------------
@@ -410,7 +471,10 @@ class Worker:
                 self.log.action(f"Worker [{self.ticket.id}] — no file blocks produced (no changes).")
                 if self.ui:
                     self.ui.on_worker_done(self.ticket.id, success=True, detail="no changes")
-                return WorkerResult(ticket_id=self.ticket.id, success=True, proposed_diff="")
+                return WorkerResult(
+                    ticket_id=self.ticket.id, success=True, proposed_diff="",
+                    uncertain=is_uncertain,
+                )
 
             if self.verbose:
                 for path, content in file_blocks.items():
@@ -451,13 +515,24 @@ class Worker:
             # Handshake: check for conflicts (acquires per-file locks)
             approved, constraint_msg = await self._check_and_stage(diff)
             if approved:
-                self.log.action(f"Worker [{self.ticket.id}] — diff approved and staged.")
+                detail = "uncertain" if is_uncertain else None
+                self.log.action(
+                    f"Worker [{self.ticket.id}] — diff approved and staged"
+                    + (" (uncertain)" if is_uncertain else "") + "."
+                )
                 if self.ui:
-                    self.ui.on_worker_done(self.ticket.id, success=True)
+                    # Phase 18: pass the list of modified files so the extension
+                    # can offer per-worker diff viewing and file navigation.
+                    self.ui.on_worker_done(
+                        self.ticket.id, success=True,
+                        detail=detail,
+                        files=list(file_blocks.keys()),
+                    )
                 return WorkerResult(
                     ticket_id=self.ticket.id,
                     success=True,
                     proposed_diff=diff,
+                    uncertain=is_uncertain,
                 )
 
             # Rejected — send constraint feedback with CURRENT file contents so
@@ -551,6 +626,22 @@ class Worker:
         """
         if not diff:
             return True, ""
+
+        # Phase 10: reject before touching the VFS if the diff targets any
+        # context-only file.  Parse the target paths from the diff headers
+        # without a full apply so we can bail cheaply.
+        if self._context_file_set:
+            from turbine.vfs import _parse_unified_diff as _parse_diff
+            illegal = {
+                h.file_path
+                for h in _parse_diff("_check", diff)
+                if h.file_path in self._context_file_set
+            }
+            if illegal:
+                return False, (
+                    "The following files are read-only context and must not be modified: "
+                    + ", ".join(sorted(illegal))
+                )
 
         # Acquire all relevant file locks in sorted order to prevent deadlock.
         # Include new_files so two workers can't race on the same new path.
@@ -686,14 +777,45 @@ class Worker:
                 continue
             content = "\n".join(snapshot)
             if rel in self._large_files:
-                label = f"### {rel} [LARGE FILE — use scoped edits]"
+                # Show with line numbers so the LLM can reference them
+                # precisely when producing line-range scoped edits.
+                n = len(snapshot)
+                width = len(str(n))
+                numbered = "\n".join(
+                    f"{i + 1:>{width}} | {line}" for i, line in enumerate(snapshot)
+                )
+                label = f"### {rel} [LARGE FILE — use scoped edits] ({n} lines)"
+                parts.append(f"{label}\n```\n{numbered}\n```")
             else:
                 label = f"### {rel}"
-            parts.append(f"{label}\n```\n{content}\n```")
+                parts.append(f"{label}\n```\n{content}\n```")
         # Phase 8: show new-file stubs so the worker knows what to populate
         for rel in self.ticket.new_files:
             parts.append(f"### {rel} *(new file — currently empty)*\n```\n```")
         return "\n\n".join(parts) if parts else "(no files provided)"
+
+    def _build_context_file_contents(self) -> str:
+        """Return a clearly labelled read-only context section, or empty string.
+
+        Phase 10: context_files are presented under a distinct heading so the
+        worker understands they provide reference information only and must not
+        be modified.
+        """
+        if not self.ticket.context_files:
+            return ""
+        parts: list[str] = []
+        for rel in self.ticket.context_files:
+            snapshot = self.vfs.get_snapshot(rel)
+            if snapshot is None:
+                self.log.error(
+                    f"Worker [{self.ticket.id}] — no VFS snapshot for context file '{rel}', skipping."
+                )
+                continue
+            content = "\n".join(snapshot)
+            parts.append(f"### {rel} *(read-only — do NOT modify)*\n```\n{content}\n```")
+        if not parts:
+            return ""
+        return "\n## Read-only context (reference only — do not modify these files)\n" + "\n\n".join(parts) + "\n"
 
     def _prune_messages(self, messages: list[dict]) -> list[dict]:
         """Drop the oldest non-system turns if the conversation overflows the budget."""
@@ -709,21 +831,29 @@ class Worker:
         return messages
 
     # ------------------------------------------------------------------
-    # API call with exponential back-off retry
+    # API call with exponential back-off retry — Phase 16: streaming
     # ------------------------------------------------------------------
 
     async def _call_with_retry(self, messages: list[dict]) -> str:
-        """Call Mistral chat with retries on transient errors."""
+        """Call Mistral via the streaming API with retries on transient errors.
+
+        Phase 16 changes
+        ----------------
+        * Uses ``stream_async`` instead of ``complete_async`` so tokens are
+          yielded as they arrive.
+        * Pipes each chunk to ``on_worker_token`` on the UI so the dashboard
+          shows a live character count rather than a spinner.
+        * Buffers the full text and records token usage from the final ``usage``
+          object attached to the last stream event — no change to downstream
+          parsing logic.
+        """
         delay = RETRY_BASE_DELAY
         last_exc: Exception | None = None
 
         for attempt in range(1, self.max_api_retries + 1):
             try:
-                response = await self.client.chat.complete_async(
-                    model=self.model,
-                    messages=messages,
-                )
-                return response.choices[0].message.content or ""
+                buffer = await self._stream_response(messages)
+                return buffer
             except Exception as exc:
                 last_exc = exc
                 status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
@@ -739,3 +869,82 @@ class Worker:
                     delay *= 2
 
         raise last_exc  # type: ignore[misc]
+
+    async def _stream_response(self, messages: list[dict]) -> str:
+        """Open a streaming chat completion and return the fully buffered text.
+
+        Emits ``on_worker_token`` UI events as each chunk arrives so the
+        dashboard can show a live character count.  Records token usage from
+        the stream's final ``usage`` datum for Phase 15 cost tracking.
+
+        Falls back gracefully to a non-streaming call if the client does not
+        expose ``chat.stream_async`` (e.g. in tests that mock the client).
+        """
+        # Prefer streaming if the client supports it
+        stream_fn = getattr(getattr(self.client, "chat", None), "stream_async", None)
+        if stream_fn is None:
+            # Fallback: non-streaming (covers mocked clients in tests)
+            response = await self.client.chat.complete_async(
+                model=self.model,
+                messages=messages,
+            )
+            content = response.choices[0].message.content or ""
+            usage = getattr(response, "usage", None)
+            if usage is not None and self.cost_tracker is not None:
+                self.cost_tracker.record(
+                    input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                    output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                )
+            return content
+
+        # Streaming path
+        parts: list[str] = []
+        char_count = 0
+        usage = None
+
+        # stream_async is a coroutine function — await the call to get the
+        # EventStreamAsync context manager, then iterate over it.
+        async with await stream_fn(model=self.model, messages=messages) as stream:
+            async for chunk in stream:
+                # Extract delta text from chunk.
+                # SDK shape: CompletionEvent.data → CompletionChunk
+                #            .choices[0].delta.content (str | list | UNSET)
+                delta = ""
+                try:
+                    raw = chunk.data.choices[0].delta.content
+                    if isinstance(raw, str):
+                        delta = raw
+                except (AttributeError, IndexError):
+                    try:
+                        raw = chunk.choices[0].delta.content
+                        if isinstance(raw, str):
+                            delta = raw
+                    except (AttributeError, IndexError):
+                        pass
+
+                if delta:
+                    parts.append(delta)
+                    char_count += len(delta)
+                    # Notify the UI of the updated character count
+                    if self.ui is not None and hasattr(self.ui, "on_worker_token"):
+                        self.ui.on_worker_token(self.ticket.id, char_count)
+
+                # Capture usage data from the last chunk (present on finish events)
+                try:
+                    chunk_usage = chunk.data.usage
+                except AttributeError:
+                    chunk_usage = getattr(chunk, "usage", None)
+                if chunk_usage is not None:
+                    usage = chunk_usage
+
+        content = "".join(parts)
+
+        # Phase 15: record token usage from the stream's usage datum
+        if usage is not None and self.cost_tracker is not None:
+            self.cost_tracker.record(
+                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            )
+
+        return content
+

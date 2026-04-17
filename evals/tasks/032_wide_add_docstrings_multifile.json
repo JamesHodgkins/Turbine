@@ -1,0 +1,23 @@
+{
+  "id": "task-032",
+  "description": "[WIDE] Add module-level docstrings to three independent modules",
+  "category": "wide-multi-file",
+  "request": "Add a one-sentence module-level docstring to each of the three files: cache.py, queue.py, and stack.py. The docstring should describe what the module does. Do not change any logic.",
+  "snapshot": {
+    "cache.py": "class Cache:\n    def __init__(self):\n        self._store = {}\n\n    def get(self, key):\n        return self._store.get(key)\n\n    def set(self, key, value):\n        self._store[key] = value\n",
+    "queue.py": "class Queue:\n    def __init__(self):\n        self._items = []\n\n    def enqueue(self, item):\n        self._items.append(item)\n\n    def dequeue(self):\n        return self._items.pop(0)\n",
+    "stack.py": "class Stack:\n    def __init__(self):\n        self._items = []\n\n    def push(self, item):\n        self._items.append(item)\n\n    def pop(self):\n        return self._items.pop()\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "cache.py"},
+    {"type": "file_modified",    "file": "queue.py"},
+    {"type": "file_modified",    "file": "stack.py"},
+    {"type": "content_contains", "file": "cache.py",  "pattern": "\"\"\""},
+    {"type": "content_contains", "file": "queue.py",  "pattern": "\"\"\""},
+    {"type": "content_contains", "file": "stack.py",  "pattern": "\"\"\""},
+    {"type": "valid_python",     "file": "cache.py"},
+    {"type": "valid_python",     "file": "queue.py"},
+    {"type": "valid_python",     "file": "stack.py"}
+  ],
+  "test_commands": []
+}

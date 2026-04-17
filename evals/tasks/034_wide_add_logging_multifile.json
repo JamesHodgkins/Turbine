@@ -1,0 +1,21 @@
+{
+  "id": "task-034",
+  "description": "[WIDE] Add logging calls to two independent service modules",
+  "category": "wide-multi-file",
+  "request": "Add logging to both order_service.py and payment_service.py. Each file should import the `logging` module, create a module-level logger (`logger = logging.getLogger(__name__)`), and add a `logger.info(...)` call at the start of each public function. Do not change any existing logic.",
+  "snapshot": {
+    "order_service.py": "def create_order(user_id, items):\n    return {'user_id': user_id, 'items': items, 'status': 'pending'}\n\ndef cancel_order(order_id):\n    return {'order_id': order_id, 'status': 'cancelled'}\n",
+    "payment_service.py": "def charge(user_id, amount):\n    return {'user_id': user_id, 'amount': amount, 'charged': True}\n\ndef refund(transaction_id):\n    return {'transaction_id': transaction_id, 'refunded': True}\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "order_service.py"},
+    {"type": "file_modified",    "file": "payment_service.py"},
+    {"type": "content_contains", "file": "order_service.py",  "pattern": "import logging"},
+    {"type": "content_contains", "file": "order_service.py",  "pattern": "logger\\.info"},
+    {"type": "content_contains", "file": "payment_service.py","pattern": "import logging"},
+    {"type": "content_contains", "file": "payment_service.py","pattern": "logger\\.info"},
+    {"type": "valid_python",     "file": "order_service.py"},
+    {"type": "valid_python",     "file": "payment_service.py"}
+  ],
+  "test_commands": []
+}

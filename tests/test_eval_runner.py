@@ -15,11 +15,16 @@ import pytest
 
 from turbine.eval_runner import (
     AssertionChecker,
+    BaselineRegression,
     EvalResult,
     EvalRunner,
     EvalTask,
     _write_snapshot,
+    compare_to_baseline,
+    load_baseline,
+    print_baseline_report,
     print_eval_report,
+    save_baseline,
 )
 
 
@@ -319,14 +324,15 @@ class TestLoadTasks:
         with pytest.raises(ValueError, match="bad.json"):
             runner.load_tasks()
 
-    def test_all_20_real_tasks_load(self):
+    def test_all_real_tasks_load(self):
         """Smoke-test that every task in evals/tasks/ is valid JSON."""
         tasks_dir = Path(__file__).parent.parent / "evals" / "tasks"
         if not tasks_dir.exists():
             pytest.skip("evals/tasks directory not found")
         runner = EvalRunner(tasks_dir, api_key="fake")
         tasks = runner.load_tasks()
-        assert len(tasks) == 20
+        # Phase 20 adds 20 new tasks (021-040); expect at least 40
+        assert len(tasks) >= 40
         ids = [t.id for t in tasks]
         assert "task-001" in ids
         assert "task-020" in ids
@@ -441,3 +447,110 @@ class TestPrintEvalReport:
         assert "PASS"  in output
         assert "FAIL"  in output or "ERROR" in output
         assert "1/2"   in output
+
+
+# ---------------------------------------------------------------------------
+# Baseline helpers — Phase 13 gate
+# ---------------------------------------------------------------------------
+
+def _make_result(task_id: str, score: float) -> EvalResult:
+    task = _task(id=task_id)
+    return EvalResult(task=task, passed=score == 1.0, score=score, assertion_results=[])
+
+
+class TestSaveLoadBaseline:
+    def test_round_trip(self, tmp_path: Path):
+        results = [_make_result("t-1", 1.0), _make_result("t-2", 0.5)]
+        path = tmp_path / "baseline.json"
+        save_baseline(results, path)
+        loaded = load_baseline(path)
+        assert loaded == {"t-1": 1.0, "t-2": 0.5}
+
+    def test_sorted_keys_in_file(self, tmp_path: Path):
+        results = [_make_result("z-task", 1.0), _make_result("a-task", 0.5)]
+        path = tmp_path / "baseline.json"
+        save_baseline(results, path)
+        raw = path.read_text()
+        assert raw.index("a-task") < raw.index("z-task")
+
+    def test_load_missing_file_raises(self, tmp_path: Path):
+        with pytest.raises(ValueError, match="Could not read baseline"):
+            load_baseline(tmp_path / "nonexistent.json")
+
+    def test_load_bad_json_raises(self, tmp_path: Path):
+        bad = tmp_path / "bad.json"
+        bad.write_text("not json{{")
+        with pytest.raises(ValueError, match="Could not read baseline"):
+            load_baseline(bad)
+
+    def test_load_non_object_raises(self, tmp_path: Path):
+        path = tmp_path / "arr.json"
+        path.write_text("[1, 2, 3]")
+        with pytest.raises(ValueError, match="not a JSON object"):
+            load_baseline(path)
+
+
+class TestCompareToBaseline:
+    def test_no_regressions_when_scores_equal(self):
+        results = [_make_result("t-1", 1.0), _make_result("t-2", 0.5)]
+        baseline = {"t-1": 1.0, "t-2": 0.5}
+        assert compare_to_baseline(results, baseline) == []
+
+    def test_no_regressions_when_scores_improved(self):
+        results = [_make_result("t-1", 1.0)]
+        baseline = {"t-1": 0.5}
+        assert compare_to_baseline(results, baseline) == []
+
+    def test_detects_regression(self):
+        results = [_make_result("t-1", 0.5)]
+        baseline = {"t-1": 1.0}
+        regressions = compare_to_baseline(results, baseline)
+        assert len(regressions) == 1
+        reg = regressions[0]
+        assert reg.task_id == "t-1"
+        assert reg.baseline_score == 1.0
+        assert reg.current_score == 0.5
+        assert reg.delta == pytest.approx(-0.5)
+
+    def test_new_tasks_not_flagged(self):
+        """Tasks not in the baseline cannot regress."""
+        results = [_make_result("brand-new", 0.0)]
+        baseline = {"t-1": 1.0}
+        assert compare_to_baseline(results, baseline) == []
+
+    def test_multiple_regressions(self):
+        results = [
+            _make_result("t-1", 0.0),
+            _make_result("t-2", 0.5),
+            _make_result("t-3", 1.0),  # no regression
+        ]
+        baseline = {"t-1": 1.0, "t-2": 1.0, "t-3": 1.0}
+        regressions = compare_to_baseline(results, baseline)
+        assert {r.task_id for r in regressions} == {"t-1", "t-2"}
+
+    def test_baseline_regression_delta(self):
+        results = [_make_result("t-1", 0.25)]
+        baseline = {"t-1": 0.75}
+        reg = compare_to_baseline(results, baseline)[0]
+        assert reg.delta == pytest.approx(-0.5)
+
+
+class TestPrintBaselineReport:
+    def test_prints_nothing_when_no_regressions(self):
+        from io import StringIO
+        from rich.console import Console
+        buf = StringIO()
+        c = Console(file=buf, width=120)
+        print_baseline_report([], console=c)
+        assert buf.getvalue() == ""
+
+    def test_prints_regressions(self):
+        from io import StringIO
+        from rich.console import Console
+        buf = StringIO()
+        c = Console(file=buf, width=120, highlight=False)
+        regressions = [BaselineRegression("t-1", 1.0, 0.5)]
+        print_baseline_report(regressions, console=c)
+        output = buf.getvalue()
+        assert "t-1" in output
+        assert "REGRESSED" in output or "regression" in output.lower()

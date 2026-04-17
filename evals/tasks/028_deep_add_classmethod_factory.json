@@ -1,0 +1,17 @@
+{
+  "id": "task-028",
+  "description": "[DEEP] Add a @classmethod factory to a dataclass-style class",
+  "category": "deep-refactor",
+  "request": "Add a `from_dict` classmethod factory to the User class in user.py. It should accept a dict with keys 'name', 'email', and optionally 'age' (defaulting to 0 if absent), and return a User instance. The existing __init__ must remain unchanged.",
+  "snapshot": {
+    "user.py": "class User:\n    def __init__(self, name, email, age=0):\n        self.name = name\n        self.email = email\n        self.age = age\n\n    def __repr__(self):\n        return f'User({self.name!r}, {self.email!r})'\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "user.py"},
+    {"type": "content_contains", "file": "user.py", "pattern": "@classmethod"},
+    {"type": "content_contains", "file": "user.py", "pattern": "from_dict"},
+    {"type": "content_contains", "file": "user.py", "pattern": "cls\\("},
+    {"type": "valid_python",     "file": "user.py"}
+  ],
+  "test_commands": []
+}

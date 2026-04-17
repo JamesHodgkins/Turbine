@@ -1,0 +1,17 @@
+{
+  "id": "task-024",
+  "description": "[DEEP] Fix off-by-one error in binary search",
+  "category": "deep-bug-fix",
+  "request": "Fix the binary search implementation in search.py. The current implementation has an off-by-one error: it uses `mid = (lo + hi) / 2` (float division) and `hi = len(arr)` but then compares with `arr[mid]` which will crash on an empty list and return wrong results. Fix it to use integer division, initialise hi correctly, and handle the not-found case by returning -1.",
+  "snapshot": {
+    "search.py": "def binary_search(arr, target):\n    lo = 0\n    hi = len(arr)\n    while lo < hi:\n        mid = (lo + hi) / 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            lo = mid + 1\n        else:\n            hi = mid\n    return None\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "search.py"},
+    {"type": "content_contains",     "file": "search.py", "pattern": "//"},
+    {"type": "content_not_contains", "file": "search.py", "pattern": "return None"},
+    {"type": "content_contains",     "file": "search.py", "pattern": "return -1"},
+    {"type": "valid_python",         "file": "search.py"}
+  ],
+  "test_commands": []
+}

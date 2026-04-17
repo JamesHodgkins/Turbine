@@ -1,0 +1,21 @@
+{
+  "id": "task-036",
+  "description": "[WIDE] Add __repr__ to two independent model classes",
+  "category": "wide-multi-file",
+  "request": "Add a `__repr__` method to both the Product class in product.py and the Customer class in customer.py. The repr should include the class name and the primary identifier (id for Product, email for Customer). Do not change any existing logic.",
+  "snapshot": {
+    "product.py": "class Product:\n    def __init__(self, id, name, price):\n        self.id = id\n        self.name = name\n        self.price = price\n",
+    "customer.py": "class Customer:\n    def __init__(self, email, name):\n        self.email = email\n        self.name = name\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "product.py"},
+    {"type": "file_modified",    "file": "customer.py"},
+    {"type": "content_contains", "file": "product.py",  "pattern": "__repr__"},
+    {"type": "content_contains", "file": "product.py",  "pattern": "self\\.id"},
+    {"type": "content_contains", "file": "customer.py", "pattern": "__repr__"},
+    {"type": "content_contains", "file": "customer.py", "pattern": "self\\.email"},
+    {"type": "valid_python",     "file": "product.py"},
+    {"type": "valid_python",     "file": "customer.py"}
+  ],
+  "test_commands": []
+}

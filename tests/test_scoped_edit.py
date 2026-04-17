@@ -52,6 +52,7 @@ def _make_worker(
             choices=[MagicMock(message=MagicMock(content=response_text))]
         )
     )
+    client.chat.stream_async = None  # disable streaming path in tests
     return Worker(
         ticket=ticket,
         vfs=vfs,
@@ -377,6 +378,7 @@ class TestWorkerScopedEditRun:
                 choices=[MagicMock(message=MagicMock(content=response))]
             )
         )
+        client.chat.stream_async = None  # disable streaming path in tests
         worker = Worker(
             ticket=ticket,
             vfs=vfs,
@@ -408,6 +410,7 @@ class TestWorkerScopedEditRun:
                 choices=[MagicMock(message=MagicMock(content=response))]
             )
         )
+        client.chat.stream_async = None  # disable streaming path in tests
         worker = Worker(
             ticket=ticket,
             vfs=vfs,
@@ -447,6 +450,7 @@ class TestWorkerIntegrityCheck:
             MagicMock(choices=[MagicMock(message=MagicMock(content=bad_response))]),
             MagicMock(choices=[MagicMock(message=MagicMock(content=good_response))]),
         ])
+        client.chat.stream_async = None  # disable streaming path in tests
         worker = Worker(
             ticket=ticket,
             vfs=vfs,
@@ -477,6 +481,7 @@ class TestWorkerIntegrityCheck:
                 choices=[MagicMock(message=MagicMock(content=good_response))]
             )
         )
+        client.chat.stream_async = None  # disable streaming path in tests
         worker = Worker(
             ticket=ticket,
             vfs=vfs,

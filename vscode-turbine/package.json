@@ -23,6 +23,11 @@
           "type": "webview",
           "id": "turbine.sidebarView",
           "name": "Turbine"
+        },
+        {
+          "id": "turbine.runsView",
+          "name": "Runs",
+          "when": "true"
         }
       ]
     },
@@ -34,8 +39,42 @@
       {
         "command": "turbine.runDryRun",
         "title": "Turbine: Dry Run (no disk writes)"
+      },
+      {
+        "command": "turbine.showWorkerDiff",
+        "title": "Turbine: Show Worker Diff"
+      },
+      {
+        "command": "turbine.acceptWorker",
+        "title": "Turbine: Accept Worker Changes"
+      },
+      {
+        "command": "turbine.rejectWorker",
+        "title": "Turbine: Reject Worker Changes"
+      },
+      {
+        "command": "turbine.navigateToFile",
+        "title": "Turbine: Navigate to File"
+      },
+      {
+        "command": "turbine.clearDiagnostics",
+        "title": "Turbine: Clear Diagnostics"
+      },
+      {
+        "command": "turbine.refreshRuns",
+        "title": "Turbine: Refresh Runs",
+        "icon": "$(refresh)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "turbine.refreshRuns",
+          "when": "view == turbine.runsView",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "Turbine",
       "properties": {

@@ -81,6 +81,7 @@ class WorkerState:
     attempt: int = 0
     detail: str = ""
     elapsed: float = 0.0
+    token_chars: int = 0   # Phase 16: running character count from streaming
     _start: float = field(default_factory=time.monotonic, repr=False)
 
     def start(self) -> None:
@@ -232,7 +233,13 @@ class TurbineUI:
             w.detail = detail
             self._refresh_display()
 
-    def on_worker_done(self, ticket_id: str, success: bool, detail: str = "") -> None:
+    def on_worker_done(
+        self,
+        ticket_id: str,
+        success: bool,
+        detail: str = "",
+        files: list[str] | None = None,  # Phase 18: ignored by TurbineUI (rich dashboard)
+    ) -> None:
         if not self.enabled:
             return
         if ticket_id in self._workers:
@@ -241,11 +248,49 @@ class TurbineUI:
             w.detail = detail
             self._refresh_display()
 
-    def on_worker_repair(self, ticket_id: str) -> None:
+    def on_worker_repair(
+        self,
+        ticket_id: str,
+        files: list[str] | None = None,  # Phase 18: ignored by TurbineUI
+    ) -> None:
         if not self.enabled:
             return
         if ticket_id in self._workers:
             self._workers[ticket_id].status = WorkerStatus.REPAIR
+            self._refresh_display()
+
+    def on_worker_token(self, ticket_id: str, char_count: int) -> None:
+        """Phase 16: update the live token/char counter for a running worker.
+
+        Called rapidly as streaming token chunks arrive; only updates the
+        in-memory counter and redraws — no status change.
+        """
+        if not self.enabled:
+            return
+        if ticket_id in self._workers:
+            self._workers[ticket_id].token_chars = char_count
+            self._refresh_display()
+
+    def on_mode(self, mode: Any) -> None:
+        """Phase 20: notify the UI which pipeline mode was selected (WIDE/DEEP)."""
+        if not self.enabled:
+            return
+        # mode is a PipelineMode enum — show it in the header message
+        label = mode.value.upper() if hasattr(mode, "value") else str(mode)
+        self._step_messages[self._current_step] = (
+            self._step_messages.get(self._current_step, "") + f"  [{label} mode]"
+        ).strip()
+        self._refresh_display()
+
+    def on_deep_iteration(self, ticket_id: str, iteration: int, last_tool: str = "") -> None:
+        """Phase 20: update the worker row with the current Deep Mode iteration."""
+        if not self.enabled:
+            return
+        if ticket_id in self._workers:
+            w = self._workers[ticket_id]
+            w.attempt = iteration
+            if last_tool:
+                w.detail = f"tool: {last_tool}"
             self._refresh_display()
 
     def on_done(self, summary: str = "") -> None:
@@ -311,8 +356,11 @@ class TurbineUI:
             attempt_cell = str(w.attempt) if w.attempt else "—"
             elapsed_cell = f"{w.elapsed:.1f}s" if w.elapsed else "—"
             desc = w.description[:60] + "…" if len(w.description) > 60 else w.description
+            # Phase 16: show live char count while the worker is actively streaming
             if w.detail:
                 desc += f"  [dim]{w.detail[:40]}[/dim]"
+            elif w.status == WorkerStatus.RUNNING and w.token_chars:
+                desc += f"  [dim]{w.token_chars:,} chars…[/dim]"
             table.add_row(
                 w.ticket_id,
                 status_cell,

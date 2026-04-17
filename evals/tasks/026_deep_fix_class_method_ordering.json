@@ -1,0 +1,16 @@
+{
+  "id": "task-026",
+  "description": "[DEEP] Fix forward-reference bug by reordering class methods",
+  "category": "deep-bug-fix",
+  "request": "In pipeline.py, the `run` method calls `self._validate()` and `self._execute()`, but `_validate` references `self._steps` which is only assigned inside `_execute`. This causes `_validate` to always see an empty list. Restructure the class so that `_steps` is assigned in `__init__` (as an empty list), `add_step` appends to it, `_validate` checks if it's non-empty, and `run` calls `_validate` then iterates `self._steps` calling each step.",
+  "snapshot": {
+    "pipeline.py": "class Pipeline:\n    def run(self, data):\n        self._validate()\n        return self._execute(data)\n\n    def _validate(self):\n        if not self._steps:\n            raise ValueError('No steps')\n\n    def _execute(self, data):\n        self._steps = []\n        for step in self._steps:\n            data = step(data)\n        return data\n\n    def add_step(self, fn):\n        if not hasattr(self, '_steps'):\n            self._steps = []\n        self._steps.append(fn)\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "pipeline.py"},
+    {"type": "content_contains", "file": "pipeline.py", "pattern": "def __init__"},
+    {"type": "content_contains", "file": "pipeline.py", "pattern": "self\\._steps = \\[\\]"},
+    {"type": "valid_python",     "file": "pipeline.py"}
+  ],
+  "test_commands": []
+}

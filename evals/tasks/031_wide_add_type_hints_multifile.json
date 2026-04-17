@@ -1,0 +1,21 @@
+{
+  "id": "task-031",
+  "description": "[WIDE] Add return-type annotations to functions in two modules",
+  "category": "wide-multi-file",
+  "request": "Add Python return-type annotations to the public functions in both math_utils.py and string_utils.py. Use `-> int` for functions returning integers, `-> str` for string functions, and `-> bool` for boolean functions. Do not change any logic.",
+  "snapshot": {
+    "math_utils.py": "def add(a, b):\n    return a + b\n\ndef multiply(a, b):\n    return a * b\n\ndef is_even(n):\n    return n % 2 == 0\n",
+    "string_utils.py": "def to_upper(s):\n    return s.upper()\n\ndef to_lower(s):\n    return s.lower()\n\ndef is_empty(s):\n    return len(s) == 0\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "math_utils.py"},
+    {"type": "file_modified",    "file": "string_utils.py"},
+    {"type": "content_contains", "file": "math_utils.py",  "pattern": "-> int"},
+    {"type": "content_contains", "file": "math_utils.py",  "pattern": "-> bool"},
+    {"type": "content_contains", "file": "string_utils.py","pattern": "-> str"},
+    {"type": "content_contains", "file": "string_utils.py","pattern": "-> bool"},
+    {"type": "valid_python",     "file": "math_utils.py"},
+    {"type": "valid_python",     "file": "string_utils.py"}
+  ],
+  "test_commands": []
+}

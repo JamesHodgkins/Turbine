@@ -1,0 +1,21 @@
+{
+  "id": "task-033",
+  "description": "[WIDE] Rename constant MAX_SIZE to BUFFER_SIZE across two files",
+  "category": "wide-multi-file",
+  "request": "Rename the constant `MAX_SIZE` to `BUFFER_SIZE` everywhere it appears in config.py and in processor.py. Update the definition in config.py and all references in processor.py.",
+  "snapshot": {
+    "config.py": "MAX_SIZE = 1024\nDEFAULT_TIMEOUT = 30\n",
+    "processor.py": "from config import MAX_SIZE\n\ndef process(data):\n    if len(data) > MAX_SIZE:\n        raise ValueError(f'Data exceeds MAX_SIZE ({MAX_SIZE} bytes)')\n    return data[:MAX_SIZE]\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "config.py"},
+    {"type": "file_modified",        "file": "processor.py"},
+    {"type": "content_contains",     "file": "config.py",    "pattern": "BUFFER_SIZE"},
+    {"type": "content_not_contains", "file": "config.py",    "pattern": "MAX_SIZE"},
+    {"type": "content_contains",     "file": "processor.py", "pattern": "BUFFER_SIZE"},
+    {"type": "content_not_contains", "file": "processor.py", "pattern": "MAX_SIZE"},
+    {"type": "valid_python",         "file": "config.py"},
+    {"type": "valid_python",         "file": "processor.py"}
+  ],
+  "test_commands": []
+}

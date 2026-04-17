@@ -1,0 +1,23 @@
+{
+  "id": "task-038",
+  "description": "[WIDE] Add None-guard to the same risky pattern in three files",
+  "category": "wide-multi-file",
+  "request": "Add a None-check guard before calling `.strip()` in report.py, exporter.py, and formatter.py. In each file, the function calls `.strip()` on a parameter that might be None, which will raise AttributeError. Add a guard that returns an empty string if the value is None before calling .strip().",
+  "snapshot": {
+    "report.py": "def format_title(title):\n    return title.strip().upper()\n",
+    "exporter.py": "def clean_label(label):\n    return label.strip()\n",
+    "formatter.py": "def sanitize(text):\n    return text.strip().replace('\\n', ' ')\n"
+  },
+  "assertions": [
+    {"type": "file_modified",    "file": "report.py"},
+    {"type": "file_modified",    "file": "exporter.py"},
+    {"type": "file_modified",    "file": "formatter.py"},
+    {"type": "content_contains", "file": "report.py",    "pattern": "None"},
+    {"type": "content_contains", "file": "exporter.py",  "pattern": "None"},
+    {"type": "content_contains", "file": "formatter.py", "pattern": "None"},
+    {"type": "valid_python",     "file": "report.py"},
+    {"type": "valid_python",     "file": "exporter.py"},
+    {"type": "valid_python",     "file": "formatter.py"}
+  ],
+  "test_commands": []
+}

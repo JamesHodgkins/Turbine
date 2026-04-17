@@ -1,0 +1,16 @@
+{
+  "id": "task-027",
+  "description": "[DEEP] Fix bare except that silently swallows all exceptions",
+  "category": "deep-bug-fix",
+  "request": "Fix the error handling in loader.py. The current code uses a bare `except:` clause that silently swallows all exceptions including KeyboardInterrupt and SystemExit. Replace it with `except Exception as exc:` and re-raise after logging, so that only genuine runtime errors are caught.",
+  "snapshot": {
+    "loader.py": "import json\n\ndef load_config(path):\n    try:\n        with open(path) as f:\n            return json.load(f)\n    except:\n        print('Error loading config')\n        return {}\n"
+  },
+  "assertions": [
+    {"type": "file_modified",        "file": "loader.py"},
+    {"type": "content_not_contains", "file": "loader.py", "pattern": "except:"},
+    {"type": "content_contains",     "file": "loader.py", "pattern": "except Exception"},
+    {"type": "valid_python",         "file": "loader.py"}
+  ],
+  "test_commands": []
+}

@@ -132,50 +132,87 @@ def parse_scoped_edits(raw: Any) -> list[ScopedEdit]:
 # Applicator
 # ---------------------------------------------------------------------------
 
-# Matches ``def <name>`` or ``class <name>`` at any indentation level.
+# Matches Python ``def <name>`` / ``class <name>`` at any indentation level.
 _DEF_RE = re.compile(r"^(\s*)(?:def|class)\s+(\w+)\s*[:(]", re.MULTILINE)
+
+# Matches JavaScript/TypeScript method or function declarations, e.g.:
+#   methodName(...) {          ← class method
+#   async methodName(...) {
+#   function methodName(...) {
+#   const methodName = (...) => {
+#   methodName = (...) => {    ← class field arrow function
+_JS_DEF_RE = re.compile(
+    r"^(\s*)(?:"
+    r"(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{"           # method / function shorthand
+    r"|function\s+(\w+)\s*\("                          # named function declaration
+    r"|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(?.*?\)?\s*=>"  # arrow function
+    r")",
+    re.MULTILINE,
+)
 
 
 def _find_definition_range(lines: list[str], name: str) -> tuple[int, int] | None:
-    """Return the 1-based [start, end] (inclusive) line range for a function or
-    class definition named *name*.
+    """Return the 1-based [start, end] (inclusive) line range for a function,
+    method, or class definition named *name*.
 
-    The range covers from the ``def``/``class`` line to the last line of the
-    body (determined by indentation: body ends when a non-blank, non-comment
-    line at equal or lesser indentation is encountered, or end-of-file).
-
-    Returns ``None`` if no definition with that name is found.
+    Supports Python (indentation-delimited) and JavaScript/TypeScript
+    (brace-delimited).  Returns ``None`` if the name is not found.
     """
     text = "\n".join(lines)
-    for m in _DEF_RE.finditer(text):
-        if m.group(2) != name:
-            continue
-        # Convert match position to 1-based line number
-        start_line = text[: m.start()].count("\n") + 1
-        indent = len(m.group(1))
 
-        # Walk forward to find where the body ends
+    # Collect all candidate matches from both regimes.
+    # Each entry: (start_pos_in_text, indent_len, captured_name)
+    candidates: list[tuple[int, int, str]] = []
+
+    for m in _DEF_RE.finditer(text):
+        candidates.append((m.start(), len(m.group(1)), m.group(2)))
+
+    for m in _JS_DEF_RE.finditer(text):
+        # group(2) = shorthand method, group(3) = named function, group(4) = arrow
+        captured = m.group(2) or m.group(3) or m.group(4)
+        if captured:
+            candidates.append((m.start(), len(m.group(1)), captured))
+
+    for pos, indent, found_name in candidates:
+        if found_name != name:
+            continue
+
+        start_line = text[:pos].count("\n") + 1
+
+        # Detect language regime from the definition line
+        def_line = lines[start_line - 1]
+        is_brace_delimited = "{" in def_line or (
+            start_line < len(lines) and "{" in lines[start_line]
+        )
+
         end_line = start_line
-        in_body = False
-        for lineno in range(start_line, len(lines) + 1):
-            raw = lines[lineno - 1]
-            stripped = raw.rstrip()
-            if lineno == start_line:
-                in_body = True
+
+        if is_brace_delimited:
+            # Walk forward counting braces to find the matching closing brace.
+            depth = 0
+            for lineno in range(start_line, len(lines) + 1):
+                raw = lines[lineno - 1]
+                depth += raw.count("{") - raw.count("}")
                 end_line = lineno
-                continue
-            if not stripped or stripped.lstrip().startswith("#"):
-                # Blank or comment — tentatively extend
-                end_line = lineno
-                continue
-            line_indent = len(raw) - len(raw.lstrip())
-            if line_indent > indent:
-                # Still inside the body
-                end_line = lineno
-                in_body = True
-            else:
-                # Back at or before the definition's indentation level — done
-                break
+                if depth <= 0 and lineno > start_line:
+                    break
+        else:
+            # Python: body ends when a non-blank, non-comment line returns to
+            # the definition's indentation level or less.
+            for lineno in range(start_line, len(lines) + 1):
+                raw = lines[lineno - 1]
+                stripped = raw.rstrip()
+                if lineno == start_line:
+                    end_line = lineno
+                    continue
+                if not stripped or stripped.lstrip().startswith("#"):
+                    end_line = lineno
+                    continue
+                line_indent = len(raw) - len(raw.lstrip())
+                if line_indent > indent:
+                    end_line = lineno
+                else:
+                    break
 
         return (start_line, end_line)
 
@@ -236,14 +273,18 @@ class ScopedEditApplicator:
             else:
                 assert edit.lines is not None
                 start, end = edit.lines
-                if end > len(current_lines):
-                    return ScopedEditResult(
-                        success=False,
-                        error=(
-                            f"Line range [{start}, {end}] exceeds file length "
-                            f"({len(current_lines)} lines)."
-                        ),
-                    )
+                n = len(current_lines)
+                # Clamp gracefully: LLMs often miscount line numbers by a
+                # small margin, especially when appending to the end of a
+                # file.  Clamping produces the correct semantic result
+                # (append / replace-to-EOF) rather than hard-failing.
+                if start > n:
+                    # Insert past EOF — treat as append at end.
+                    start = n + 1
+                    end = n + 1
+                elif end > n:
+                    # Replacement extends beyond EOF — clamp to file length.
+                    end = n
                 resolved.append((start, end, edit.replacement))
 
         # Check for overlapping ranges
@@ -280,8 +321,14 @@ class ScopedEditApplicator:
 # ---------------------------------------------------------------------------
 
 def _extract_definitions(lines: list[str]) -> set[str]:
-    """Return the set of ``def``/``class`` names present in *lines*."""
-    return {m.group(2) for m in _DEF_RE.finditer("\n".join(lines))}
+    """Return the set of function/method/class names present in *lines*."""
+    text = "\n".join(lines)
+    names: set[str] = {m.group(2) for m in _DEF_RE.finditer(text)}
+    for m in _JS_DEF_RE.finditer(text):
+        captured = m.group(2) or m.group(3) or m.group(4)
+        if captured:
+            names.add(captured)
+    return names
 
 
 def check_definition_integrity(
