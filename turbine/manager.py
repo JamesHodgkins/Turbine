@@ -54,6 +54,8 @@ class Ticket:
     new_files: list[str] = field(default_factory=list)  # relative paths of brand-new files to create
     context: str = ""                # extra notes from the Manager for the worker
     context_files: list[str] = field(default_factory=list)  # files the worker may READ but NOT write
+    # Phase 22.2: set True to skip the pre-write reflection call for trivially simple tickets
+    reflection_skipped: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +65,7 @@ class Ticket:
             "new_files": self.new_files,
             "context": self.context,
             "context_files": self.context_files,
+            "reflection_skipped": self.reflection_skipped,
         }
 
 
@@ -181,6 +184,86 @@ Rules for "new_files":
   - Omit the field (or use []) when the ticket only modifies existing files.
   - A new file path must not appear in any other ticket's "relevant_files" or "new_files".
   - Describe the new file's intended content and structure in the "context" field.
+Return nothing but the JSON object — no prose, no markdown fences."""
+
+PLAN_REVIEW_SYSTEM = """\
+You are Turbine's Plan Reviewer. Given the original user request, the investigator's \
+diagnosis, and the proposed ticket decomposition, assess whether the plan is complete, \
+non-conflicting, and sufficient to fully solve the request.
+
+Return ONLY a JSON object with this exact shape:
+{
+  "confidence": 0.9,
+  "gaps": ["<specific missing capability>", ...],
+  "risks": ["<implementation risk or vague step>", ...],
+  "verdict": "proceed",
+  "revision_notes": "",
+  "clarification_question": "",
+  "clarification_options": []
+}
+
+Field rules:
+- "confidence": float 0.0–1.0. How confident are you the plan fully solves the request?
+- "gaps": list of specific, actionable missing pieces — capabilities or files not covered
+  by any ticket. Empty list when none.
+- "risks": list of concrete implementation risks — vague pseudocode steps, file assignments
+  that seem likely to conflict, underspecified algorithms. Empty list when none.
+- "verdict": exactly one of:
+    "proceed"  — plan is sufficient; proceed to execution.
+    "revise"   — plan has fixable gaps; populate revision_notes with precise instructions.
+    "clarify"  — the user's intent is fundamentally ambiguous; populate the clarification fields.
+- "revision_notes": non-empty string ONLY when verdict == "revise". Plain English
+  instructions to the Investigator describing exactly what to add or change in the tickets.
+  Be specific — name files, functions, or steps that are missing.
+- "clarification_question": non-empty string ONLY when verdict == "clarify".
+- "clarification_options": 2–4 short option strings, non-empty ONLY when verdict == "clarify".
+
+Guidelines:
+- Use verdict "proceed" when confidence >= 0.8 and gaps is empty.
+- Use verdict "revise" only when the gap can be fixed within the existing file context —
+  do NOT request revision to fetch additional files, that is the Investigator's job.
+- Use verdict "clarify" only when the user's intent cannot be inferred — not for style
+  preferences or minor unknowns you can resolve yourself.
+- Do NOT flag risks about files outside the provided ticket file lists.
+- A single well-scoped ticket with a clear plan is almost always sufficient — do not
+  invent gaps that aren't there.
+Return nothing but the JSON object — no prose, no markdown fences."""
+
+SYNTHESIS_SYSTEM = """\
+You are Turbine's Synthesis Reviewer. Given the original user request, the manager's \
+diagnosis, what each worker was supposed to do, and the unified diffs they produced, \
+assess whether the combined changes fully and correctly solve the request.
+
+Return ONLY a JSON object with this exact shape:
+{
+  "verdict": "commit",
+  "reason": "<one or two sentences>",
+  "suspicious_files": []
+}
+
+Field rules:
+- "verdict": exactly one of:
+    "commit"  — changes look complete and correct; proceed to commit.
+    "repair"  — one or more specific files are incorrect or missing expected changes;
+                list them in "suspicious_files" so those workers can be re-run.
+    "abort"   — the changes are fundamentally wrong (e.g., deleting critical files,
+                breaking auth, wiping config without replacement); force manual review.
+- "reason": always non-empty. One or two sentences explaining your verdict.
+- "suspicious_files": non-empty only when verdict == "repair". List the relative
+  file paths from the diffs that look incorrect or incomplete. Empty for other verdicts.
+
+Guidelines:
+- Use verdict "commit" in the VAST MAJORITY of cases. Workers followed a reviewed plan
+  — assume correctness unless you see a clear, concrete problem in the diffs.
+- Use verdict "repair" only for specific, observable issues: a file that the plan says
+  must change but shows no diff, an obviously broken function, a missing import that
+  would cause an import error.
+- Use verdict "abort" ONLY for catastrophic, irreversible harm — not for style or
+  minor disagreements.
+- Do NOT flag uncertainty, style differences, or cases where the implementation
+  differs from what you personally would have written.
+- If only some diffs are present (some workers failed), assess what IS there —
+  do not penalise workers that succeeded for a peer's failure.
 Return nothing but the JSON object — no prose, no markdown fences."""
 
 
@@ -368,6 +451,8 @@ class Manager:
         self.clarification_question: str = ""        # question emitted by investigator
         self.clarification_options: list[str] = []   # answer options
         self.clarification_answer: str = ""          # user's chosen answer (injected before re-investigate)
+        # Phase 22.1: plan review revision notes — injected into re-investigate when plan_review loops back
+        self._plan_review_notes: str = ""
         # Phase 20: resolved pipeline mode (set after investigate() + routing)
         self.mode: PipelineMode = PipelineMode.WIDE  # default until routing runs
         self._llm_mode_hint: PipelineMode = PipelineMode.WIDE  # soft signal from LLM
@@ -510,11 +595,22 @@ class Manager:
                     "Do NOT emit a 'clarification' block this time."
                 )
 
+            # Phase 22.1: if the Plan Reviewer requested a revision, inject its notes
+            review_note = ""
+            if self._plan_review_notes:
+                review_note = (
+                    f"\n\nPlan review feedback — address these gaps in your revised tickets:\n"
+                    f"{self._plan_review_notes}\n"
+                    "Produce a revised ticket plan that fixes the issues above. "
+                    "Do NOT emit a 'clarification' block unless the request is still ambiguous."
+                )
+
             user_content = (
                 f"User request:\n{self.user_request}\n\n"
                 f"Relevant file contents:\n{files_text}"
                 + truncation_note
                 + answer_note
+                + review_note
             )
 
             response = await self._chat(INVESTIGATE_SYSTEM, user_content)
@@ -713,6 +809,89 @@ class Manager:
         return self.tickets
 
     # ------------------------------------------------------------------
+    # Step 3.5: Plan Review  (Phase 22.1)
+    # ------------------------------------------------------------------
+
+    async def plan_review(self) -> None:
+        """Sanity-check the generated ticket plan before dispatching workers.
+
+        Calls the LLM with the current diagnosis and ticket set and asks it to
+        assess completeness, flag gaps, and issue one of three verdicts:
+
+        - "proceed"  → plan is good; continue to Delegate.
+        - "revise"   → re-run Investigate with targeted revision notes
+                       (capped at MAX_PLAN_REVIEW_ROUNDS).
+        - "clarify"  → populate clarification_question so the Clarification
+                       Gate (Phase 19) can surface it to the user.
+
+        On any LLM/parse failure the method logs a warning and returns
+        immediately so the pipeline is never blocked by the review step.
+        """
+        self.ui.on_step(PipelineStep.PLAN_REVIEW, "reviewing plan…")
+        self.log.thinking("Step 3.5 — Plan Review: checking ticket completeness…")
+
+        for round_num in range(self.MAX_PLAN_REVIEW_ROUNDS):
+            tickets_json = json.dumps([t.to_dict() for t in self.tickets], indent=2)
+            user_content = (
+                f"User request:\n{self.user_request}\n\n"
+                f"Diagnosis:\n{self.diagnosis}\n\n"
+                f"Proposed tickets:\n{tickets_json}"
+            )
+
+            raw = await self._chat(PLAN_REVIEW_SYSTEM, user_content)
+            try:
+                review = json.loads(self._strip_fences(raw))
+            except (json.JSONDecodeError, ValueError) as exc:
+                self.log.error(f"Plan review: could not parse response — {exc}; skipping.")
+                return
+
+            confidence: float = float(review.get("confidence", 1.0))
+            gaps: list[str] = [str(g) for g in review.get("gaps", []) if g]
+            risks: list[str] = [str(r) for r in review.get("risks", []) if r]
+            verdict: str = str(review.get("verdict", "proceed")).strip()
+
+            self.log.action(
+                f"Plan review round {round_num + 1}/{self.MAX_PLAN_REVIEW_ROUNDS}: "
+                f"verdict={verdict}, confidence={confidence:.2f}, "
+                f"gaps={len(gaps)}, risks={len(risks)}"
+            )
+
+            if self._json_ui is not None:
+                self._json_ui.on_plan(
+                    confidence=confidence,
+                    gaps=gaps,
+                    risks=risks,
+                    verdict=verdict,
+                    ticket_count=len(self.tickets),
+                )
+
+            if verdict == "proceed":
+                return
+
+            if verdict == "revise" and round_num < self.MAX_PLAN_REVIEW_ROUNDS - 1:
+                revision_notes = str(review.get("revision_notes", "")).strip()
+                self.log.thinking(f"Plan review requesting revision: {revision_notes}")
+                self._plan_review_notes = revision_notes
+                await self.investigate()
+                continue
+
+            if verdict == "clarify":
+                q = str(review.get("clarification_question", "")).strip()
+                opts = [str(o) for o in review.get("clarification_options", []) if o]
+                # Only set if the Investigator didn't already raise a clarification
+                if q and not self.clarification_question:
+                    self.clarification_question = q
+                    self.clarification_options = opts
+                return
+
+            # verdict == "revise" but revision rounds exhausted, or unknown verdict
+            self.log.error(
+                f"Plan review: unresolved gaps after {round_num + 1} round(s) "
+                "— proceeding with best available plan."
+            )
+            return
+
+    # ------------------------------------------------------------------
     # Step 4: Delegate
     # ------------------------------------------------------------------
 
@@ -815,6 +994,83 @@ class Manager:
         return await worker.run()
 
     # ------------------------------------------------------------------
+    # Step 4.5: Post-execution Synthesis  (Phase 22.3)
+    # ------------------------------------------------------------------
+
+    async def synthesize(self) -> tuple[str, str, list[str]]:
+        """Holistic diff review after all workers complete, before commit.
+
+        Reads every successful worker's proposed diff together and asks the LLM
+        whether the combined changes fully and correctly solve the original
+        request.  Returns ``(verdict, reason, suspicious_files)`` where verdict
+        is one of ``"commit"``, ``"repair"``, or ``"abort"``.
+
+        Skipped when there are no successful diffs to assess.  On any LLM or
+        parse failure returns ``("commit", "", [])`` so the pipeline is never
+        blocked by the synthesis step.
+        """
+        successful = [r for r in self.worker_results if r.success and r.proposed_diff]
+        if not successful:
+            self.log.action("Synthesis: no successful diffs — skipping.")
+            return "commit", "", []
+
+        self.log.thinking(
+            f"Step 4.5 — Synthesis: reviewing {len(successful)} diff(s)…"
+        )
+
+        tickets_summary = "\n".join(
+            f"  - {t.id}: {t.description}" for t in self.tickets
+        )
+        diffs_text = "\n\n".join(
+            f"## {r.ticket_id}\n```diff\n{r.proposed_diff}\n```"
+            for r in successful
+        )
+        user_content = (
+            f"User request:\n{self.user_request}\n\n"
+            f"Diagnosis:\n{self.diagnosis}\n\n"
+            f"Worker tickets:\n{tickets_summary}\n\n"
+            f"Combined diffs:\n{diffs_text}"
+        )
+
+        raw = await self._chat(SYNTHESIS_SYSTEM, user_content)
+        try:
+            data = json.loads(self._strip_fences(raw))
+        except (json.JSONDecodeError, ValueError) as exc:
+            self.log.error(
+                f"Synthesis: could not parse response — {exc}; defaulting to commit."
+            )
+            if self._json_ui is not None:
+                self._json_ui.on_synthesis(
+                    verdict="commit", reason=f"parse error: {exc}", suspicious_files=[]
+                )
+            return "commit", "", []
+
+        verdict: str = str(data.get("verdict", "commit")).strip()
+        reason: str = str(data.get("reason", "")).strip()
+        suspicious_files: list[str] = [
+            str(f) for f in data.get("suspicious_files", []) if f
+        ]
+
+        if verdict not in ("commit", "repair", "abort"):
+            self.log.error(
+                f"Synthesis: unknown verdict '{verdict}' — defaulting to commit."
+            )
+            verdict = "commit"
+
+        self.log.action(
+            f"Synthesis verdict: {verdict}"
+            + (f", {len(suspicious_files)} suspicious file(s)" if suspicious_files else "")
+            + (f" — {reason[:120]}" if reason else "")
+        )
+
+        if self._json_ui is not None:
+            self._json_ui.on_synthesis(
+                verdict=verdict, reason=reason, suspicious_files=suspicious_files
+            )
+
+        return verdict, reason, suspicious_files
+
+    # ------------------------------------------------------------------
     # Step 5: Commit & Verify
     # ------------------------------------------------------------------
 
@@ -901,6 +1157,7 @@ class Manager:
 
     MAX_REPAIR_ROUNDS = 3          # Phase 12: round 1 = constraint-only, rounds 2-3 = full re-run
     MAX_INVESTIGATION_ROUNDS = 2  # Phase 11: max follow-up read rounds
+    MAX_PLAN_REVIEW_ROUNDS = 2    # Phase 22.1: max revision cycles before proceeding
 
     async def _repair_loop(
         self,
@@ -1099,6 +1356,11 @@ class Manager:
         await self.preprocess()
         await self.investigate()
 
+        # Phase 22.1: Plan Review — LLM sanity-check on tickets before dispatch.
+        # Runs before the Clarification Gate so any clarification raised here is
+        # handled by the same gate that processes the Investigator's own questions.
+        await self.plan_review()
+
         # Phase 19: Clarification Gate — runs after the first investigation pass.
         if self.clarification_question and self.clarification_options:
             # Always emit the JSON event so the VS Code extension (or any
@@ -1166,6 +1428,36 @@ class Manager:
             )
             self.review = True
 
+        # Phase 22.3: Post-execution synthesis — holistic diff review before commit.
+        # Skipped in dry_run (nothing will be committed) and Deep Mode (no proposed_diff).
+        # "abort" verdict forces --review; "repair" context is merged into any repair
+        # tasks that the subsequent test run produces, giving the repair worker richer
+        # feedback than raw test output alone.
+        _synth_verdict = "commit"
+        _synth_reason = ""
+        _synth_files: list[str] = []
+        if not self.dry_run and self.mode != PipelineMode.DEEP:
+            _synth_verdict, _synth_reason, _synth_files = await self.synthesize()
+            if _synth_verdict == "abort":
+                self.log.error(
+                    f"⚠️  SYNTHESIS ABORTED — {_synth_reason}\n"
+                    "Forcing --review so you can inspect changes before they are written."
+                )
+                self.review = True
+
+        def _enrich_repair_tasks(tasks: list[RepairTask]) -> list[RepairTask]:
+            """Prepend synthesis context to repair tasks for flagged files."""
+            if _synth_verdict != "repair" or not _synth_files or not tasks:
+                return tasks
+            flagged = set(_synth_files)
+            for rt in tasks:
+                if any(f in flagged for f in rt.relevant_files):
+                    rt.failure_output = (
+                        f"Synthesis review flagged this worker's output:\n{_synth_reason}\n\n"
+                        f"Test failures:\n{rt.failure_output}"
+                    )
+            return tasks
+
         if self.review and not self.dry_run:
             # Review gate: show diff, prompt, then commit + test + repair
             engine = GitAwareCommitEngine(
@@ -1184,13 +1476,13 @@ class Manager:
             if self.commit_result.written_count and self.test_commands:
                 _, _, repair_tasks = await self._run_tests()
                 if repair_tasks:
-                    await self._repair_loop(repair_tasks)
+                    await self._repair_loop(_enrich_repair_tasks(repair_tasks))
 
         elif self.test_commands or not self.dry_run:
             # Normal path: commit + test + repair
             _, _, repair_tasks = await self.verify()
             if repair_tasks:
-                await self._repair_loop(repair_tasks)
+                await self._repair_loop(_enrich_repair_tasks(repair_tasks))
 
         successes = sum(1 for r in self.worker_results if r.success)
         self.ui.on_done(

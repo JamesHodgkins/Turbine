@@ -32,7 +32,7 @@ from typing import Any
 # Constants
 # ---------------------------------------------------------------------------
 
-LARGE_FILE_THRESHOLD = 200  # lines; files at or above this use scoped-edit mode
+LARGE_FILE_THRESHOLD = 350  # lines; files at or above this use scoped-edit mode
 
 
 # ---------------------------------------------------------------------------
@@ -43,17 +43,21 @@ LARGE_FILE_THRESHOLD = 200  # lines; files at or above this use scoped-edit mode
 class ScopedEdit:
     """A single targeted replacement within a file.
 
-    Exactly one of ``function`` or ``lines`` is set.
+    Exactly one of ``function``, ``lines``, or ``search`` is set.
     """
     replacement: str
     function: str | None = None       # target function or class name
     lines: tuple[int, int] | None = None  # 1-based [start, end] inclusive
+    search: str | None = None         # exact text to locate and replace
 
     def is_function_scoped(self) -> bool:
         return self.function is not None
 
     def is_line_scoped(self) -> bool:
         return self.lines is not None
+
+    def is_search_scoped(self) -> bool:
+        return self.search is not None
 
 
 @dataclass
@@ -120,9 +124,15 @@ def parse_scoped_edits(raw: Any) -> list[ScopedEdit]:
                 )
             edits.append(ScopedEdit(lines=(start, end), replacement=replacement))
 
+        elif "search" in item:
+            search_text = item["search"]
+            if not isinstance(search_text, str) or not search_text.strip():
+                raise ValueError(f"Edit #{i}: 'search' must be a non-empty string")
+            edits.append(ScopedEdit(search=search_text, replacement=replacement))
+
         else:
             raise ValueError(
-                f"Edit #{i}: must have either 'function' or 'lines' key"
+                f"Edit #{i}: must have 'function', 'lines', or 'search' key"
             )
 
     return edits
@@ -149,6 +159,67 @@ _JS_DEF_RE = re.compile(
     r")",
     re.MULTILINE,
 )
+
+
+def build_file_outline(lines: list[str]) -> str:
+    """Return a compact structural outline of *lines* listing definition names and their
+    1-based line numbers, sorted by position.
+
+    Used as a navigation header prepended to large-file content so the LLM can
+    quickly locate functions without counting lines manually.
+    Returns an empty string if no definitions are found.
+    """
+    text = "\n".join(lines)
+    entries: list[tuple[int, str, int]] = []  # (line_no, label, indent_chars)
+
+    for m in _DEF_RE.finditer(text):
+        line_no = text[: m.start()].count("\n") + 1
+        indent = len(m.group(1))
+        keyword = "class" if m.group(0).lstrip().startswith("class") else "def"
+        entries.append((line_no, f"{keyword} {m.group(2)}", indent))
+
+    for m in _JS_DEF_RE.finditer(text):
+        captured = m.group(2) or m.group(3) or m.group(4)
+        if captured:
+            line_no = text[: m.start()].count("\n") + 1
+            indent = len(m.group(1))
+            entries.append((line_no, captured, indent))
+
+    if not entries:
+        return ""
+
+    entries.sort(key=lambda x: x[0])
+    width = len(str(len(lines)))
+    out_lines = [
+        f"  {no:>{width}}: {'  ' * (indent // 4)}{label}"
+        for no, label, indent in entries
+    ]
+    return "**Outline:**\n" + "\n".join(out_lines)
+
+
+def _find_search_range(lines: list[str], search_text: str) -> tuple[int, int] | tuple[None, str]:
+    """Return the 1-based (start, end) line range that exactly matches *search_text*.
+
+    The search is performed on the joined file content so multi-line patterns
+    work naturally.  If the text is not found, or appears more than once,
+    returns ``(None, reason)`` so the caller can report a clear error.
+    """
+    content = "\n".join(lines)
+    # Normalise the search text's line endings
+    needle = search_text.replace("\r\n", "\n").replace("\r", "\n")
+
+    first = content.find(needle)
+    if first == -1:
+        return None, f"Search text not found in file."
+    if content.find(needle, first + 1) != -1:
+        return None, (
+            "Search text matches more than one location — add more surrounding "
+            "context lines to make it unique."
+        )
+
+    start_line = content[:first].count("\n") + 1
+    end_line = start_line + needle.count("\n")
+    return start_line, end_line
 
 
 def _find_definition_range(lines: list[str], name: str) -> tuple[int, int] | None:
@@ -269,6 +340,16 @@ class ScopedEditApplicator:
                         ),
                     )
                 resolved.append((rng[0], rng[1], edit.replacement))
+
+            elif edit.is_search_scoped():
+                assert edit.search is not None
+                result = _find_search_range(current_lines, edit.search)
+                if result[0] is None:
+                    return ScopedEditResult(
+                        success=False,
+                        error=f"Search/replace edit failed: {result[1]}",
+                    )
+                resolved.append((result[0], result[1], edit.replacement))
 
             else:
                 assert edit.lines is not None

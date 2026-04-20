@@ -105,8 +105,19 @@ class TestParseScopedEdits:
             parse_scoped_edits([{"lines": [0, 3], "replacement": "x"}])
 
     def test_missing_function_and_lines_raises(self):
-        with pytest.raises(ValueError, match="must have either"):
+        with pytest.raises(ValueError, match="must have"):
             parse_scoped_edits([{"replacement": "x"}])
+
+    def test_search_edit(self):
+        edits = parse_scoped_edits([{"search": "old text", "replacement": "new text"}])
+        assert len(edits) == 1
+        assert edits[0].search == "old text"
+        assert edits[0].replacement == "new text"
+        assert edits[0].is_search_scoped()
+
+    def test_empty_search_raises(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            parse_scoped_edits([{"search": "", "replacement": "x"}])
 
     def test_non_list_raises(self):
         with pytest.raises(ValueError, match="list"):
@@ -157,11 +168,13 @@ class TestScopedEditApplicatorLineRange:
         assert result.lines[-1] == "LAST"
 
     def test_out_of_range_fails(self):
+        # end > n is clamped to n (graceful behaviour for LLM miscounts),
+        # so the edit should succeed and replace lines 4-5 of the 5-line file.
         lines = self._lines()
         edits = [ScopedEdit(lines=(4, 99), replacement="x")]
         result = ScopedEditApplicator(lines).apply(edits)
-        assert not result.success
-        assert "exceeds file length" in result.error
+        assert result.success
+        assert result.lines == ["alpha", "beta", "gamma", "x"]
 
     def test_overlapping_edits_fail(self):
         lines = self._lines()
@@ -232,6 +245,87 @@ class TestScopedEditApplicatorFunctionScope:
         assert result.success
         combined = "\n".join(result.lines)
         assert "class Greeter" in combined
+
+
+# ---------------------------------------------------------------------------
+# ScopedEditApplicator — search/replace edits
+# ---------------------------------------------------------------------------
+
+class TestScopedEditApplicatorSearchReplace:
+    def _lines(self) -> list[str]:
+        return [
+            "def foo():",
+            "    x = 1",
+            "    return x",
+            "",
+            "def bar():",
+            "    y = 2",
+            "    return y",
+        ]
+
+    def test_replace_matching_block(self):
+        lines = self._lines()
+        edits = [ScopedEdit(search="    x = 1\n    return x", replacement="    x = 99\n    return x")]
+        result = ScopedEditApplicator(lines).apply(edits)
+        assert result.success
+        assert "x = 99" in "\n".join(result.lines)
+        assert "bar" in "\n".join(result.lines)  # untouched
+
+    def test_replace_single_line(self):
+        lines = self._lines()
+        edits = [ScopedEdit(search="    y = 2", replacement="    y = 42")]
+        result = ScopedEditApplicator(lines).apply(edits)
+        assert result.success
+        assert "y = 42" in "\n".join(result.lines)
+
+    def test_delete_via_empty_replacement(self):
+        lines = self._lines()
+        edits = [ScopedEdit(search="    x = 1\n    return x", replacement="")]
+        result = ScopedEditApplicator(lines).apply(edits)
+        assert result.success
+        assert "x = 1" not in "\n".join(result.lines)
+
+    def test_not_found_fails(self):
+        lines = self._lines()
+        edits = [ScopedEdit(search="this text does not exist", replacement="x")]
+        result = ScopedEditApplicator(lines).apply(edits)
+        assert not result.success
+        assert "not found" in result.error
+
+    def test_ambiguous_match_fails(self):
+        lines = ["pass", "pass", "pass"]
+        edits = [ScopedEdit(search="pass", replacement="x = 1")]
+        result = ScopedEditApplicator(lines).apply(edits)
+        assert not result.success
+        assert "more than one" in result.error
+
+    def test_multiline_search_with_context(self):
+        lines = [
+            "class Foo:",
+            "    def method(self):",
+            "        return 1",
+            "",
+            "class Bar:",
+            "    def method(self):",
+            "        return 2",
+        ]
+        # Use enough context to make the match unique
+        edits = [ScopedEdit(
+            search="class Foo:\n    def method(self):\n        return 1",
+            replacement="class Foo:\n    def method(self):\n        return 99",
+        )]
+        result = ScopedEditApplicator(lines).apply(edits)
+        assert result.success
+        text = "\n".join(result.lines)
+        assert "return 99" in text
+        assert "return 2" in text  # Bar untouched
+
+    def test_search_edit_parsed_and_applied_end_to_end(self):
+        lines = ["alpha", "beta", "gamma"]
+        edits = parse_scoped_edits([{"search": "beta", "replacement": "BETA"}])
+        result = ScopedEditApplicator(lines).apply(edits)
+        assert result.success
+        assert result.lines == ["alpha", "BETA", "gamma"]
 
 
 # ---------------------------------------------------------------------------
@@ -395,8 +489,9 @@ class TestWorkerScopedEditRun:
         assert snap is not None
         assert "return 'new'" in "\n".join(snap)
 
-    def test_bad_scoped_edit_json_falls_back_to_no_change(self):
-        """Malformed JSON in scoped_edits block → fallback → no complete block → no changes."""
+    def test_bad_scoped_edit_json_triggers_retry_loop(self):
+        """Malformed JSON in scoped_edits block → failure feedback sent each attempt
+        → worker exhausts handshake attempts → fails (not silently succeeds)."""
         big = self._big_file_lines()
         vfs = _make_vfs({"big.py": big})
         ticket = Ticket(id="t", description="d", relevant_files=["big.py"])
@@ -420,9 +515,9 @@ class TestWorkerScopedEditRun:
             max_api_retries=1,
         )
         result = asyncio.run(worker.run())
-        # Scoped edit fails, no complete file block → treated as no changes
-        assert result.success
-        assert result.proposed_diff == ""
+        # Scoped edit keeps failing → worker exhausts all handshake attempts
+        assert not result.success
+        assert "failed" in result.error
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +533,9 @@ class TestWorkerIntegrityCheck:
 
         # First response: drops 'keep'
         bad_response = '<file path="f.py">def change(): return 1\n</file>'
-        # Second response: keeps both
+        # Reflection response (attempt 1): any non-JSON text → parse error → passes
+        reflection_stub = MagicMock(choices=[MagicMock(message=MagicMock(content=""))])
+        # Second main response: keeps both
         good_response = (
             '<file path="f.py">def keep(): pass\ndef change(): return 1\n</file>'
         )
@@ -448,6 +545,7 @@ class TestWorkerIntegrityCheck:
         client = MagicMock()
         client.chat.complete_async = AsyncMock(side_effect=[
             MagicMock(choices=[MagicMock(message=MagicMock(content=bad_response))]),
+            reflection_stub,  # consumed by pre-write reflection on attempt 1
             MagicMock(choices=[MagicMock(message=MagicMock(content=good_response))]),
         ])
         client.chat.stream_async = None  # disable streaming path in tests
@@ -462,8 +560,8 @@ class TestWorkerIntegrityCheck:
         )
         result = asyncio.run(worker.run())
         assert result.success
-        # The API should have been called twice (bad → retry → good)
-        assert client.chat.complete_async.call_count == 2
+        # 3 calls: main(attempt1) + reflection(attempt1) + main(attempt2)
+        assert client.chat.complete_async.call_count == 3
 
     def test_integrity_check_passes_when_no_defs_lost(self):
         """No defs dropped → no rejection → single API call."""
@@ -492,4 +590,5 @@ class TestWorkerIntegrityCheck:
         )
         result = asyncio.run(worker.run())
         assert result.success
-        assert client.chat.complete_async.call_count == 1
+        # 2 calls: 1 main LLM call + 1 pre-write reflection call
+        assert client.chat.complete_async.call_count == 2

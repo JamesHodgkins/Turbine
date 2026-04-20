@@ -26,6 +26,9 @@ done_detail             workers_succeeded, workers_total, files_written, diff_li
 clarification_request   question, options    (Phase 19 — pause for user input in --interactive mode)
 mode                    mode             (Phase 20 — "wide" or "deep", emitted after routing)
 deep_iteration          ticket_id, iteration, last_tool  (Phase 20 — Deep Mode progress)
+plan                    confidence, gaps, risks, verdict, ticket_count  (Phase 22.1 — plan review result)
+worker_blocked          ticket_id, assumption                           (Phase 22.2 — pre-write reflection blocked)
+synthesis               verdict, reason, suspicious_files               (Phase 22.3 — post-execution diff review)
 log                     level, message   (forwarded from TurbineLogger when in JSON mode)
 """
 
@@ -95,6 +98,10 @@ class JsonEventUI:
             detail=detail,
             files=files or [],
         )
+
+    def on_worker_blocked(self, ticket_id: str, assumption: str = "") -> None:
+        """Phase 22.2: emitted when pre-write reflection flags a blocking assumption."""
+        self._emit("worker_blocked", ticket_id=ticket_id, assumption=assumption)
 
     def on_worker_repair(self, ticket_id: str, files: list[str] | None = None) -> None:
         # Phase 18: include files needing repair so the extension can show diagnostics
@@ -167,6 +174,38 @@ class JsonEventUI:
             ticket_id=ticket_id,
             iteration=iteration,
             last_tool=last_tool,
+        )
+
+    def on_plan(
+        self,
+        confidence: float,
+        gaps: list[str],
+        risks: list[str],
+        verdict: str,
+        ticket_count: int,
+    ) -> None:
+        """Phase 22.1: emit plan review result before worker dispatch."""
+        self._emit(
+            "plan",
+            confidence=confidence,
+            gaps=gaps,
+            risks=risks,
+            verdict=verdict,
+            ticket_count=ticket_count,
+        )
+
+    def on_synthesis(
+        self,
+        verdict: str,
+        reason: str,
+        suspicious_files: list[str],
+    ) -> None:
+        """Phase 22.3: emit post-execution synthesis result before commit."""
+        self._emit(
+            "synthesis",
+            verdict=verdict,
+            reason=reason,
+            suspicious_files=suspicious_files,
         )
 
     def on_clarification_request(self, question: str, options: list[str]) -> None:

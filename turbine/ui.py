@@ -105,6 +105,7 @@ class PipelineStep(str, Enum):
     DISCOVER    = "1 · Discover"
     PREPROCESS  = "2 · Preprocess"
     INVESTIGATE = "3 · Investigate"
+    PLAN_REVIEW = "3.5 · Plan Review"
     DELEGATE    = "4 · Delegate"
     COMMIT      = "5 · Commit & Verify"
     DONE        = "Done"
@@ -247,6 +248,10 @@ class TurbineUI:
             w.finish(success)
             w.detail = detail
             self._refresh_display()
+
+    def on_worker_blocked(self, ticket_id: str, assumption: str = "") -> None:
+        """Phase 22.2: mark the worker as failed due to a blocked reflection."""
+        self.on_worker_done(ticket_id, success=False, detail=f"blocked: {assumption[:50]}")
 
     def on_worker_repair(
         self,

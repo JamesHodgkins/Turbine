@@ -454,18 +454,128 @@
     }
     .worker-file-link:hover { color: var(--fg); }
 
-    /* ── Logs ─────────────────────────────────────────────────────── */
+    /* ── Activity feed ────────────────────────────────────────────── */
     .step-logs {
-      padding: 6px 10px 8px;
-      max-height: 200px;
+      padding: 4px 8px 8px;
+      max-height: 320px;
       overflow-y: auto;
-      font-family: var(--vscode-editor-font-family, "Cascadia Code", "Fira Code", "Consolas", monospace);
       font-size: 11px;
-      line-height: 1.6;
+      line-height: 1.5;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
     }
     .step-logs::-webkit-scrollbar { width: 4px; }
     .step-logs::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 4px; }
 
+    /* Base feed item */
+    .feed-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      padding: 3px 4px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      min-width: 0;
+    }
+    .feed-icon {
+      flex-shrink: 0;
+      width: 14px;
+      text-align: center;
+      font-size: 11px;
+      margin-top: 1px;
+      opacity: 0.75;
+    }
+    .feed-body {
+      flex: 1;
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    /* Thinking item: dim italic prose */
+    .feed-thinking {
+      background: transparent;
+    }
+    .feed-thinking .feed-icon { color: var(--cyan); opacity: 0.6; }
+    .feed-thinking .feed-body {
+      color: var(--fg-muted);
+      font-style: italic;
+      font-size: 10.5px;
+      line-height: 1.55;
+    }
+
+    /* Action item: bold green result */
+    .feed-action {
+      background: color-mix(in srgb, var(--green) 6%, transparent);
+      border: 1px solid color-mix(in srgb, var(--green) 14%, transparent);
+    }
+    .feed-action .feed-icon { color: var(--green); }
+    .feed-action .feed-body { color: var(--green); font-weight: 500; }
+
+    /* Error / conflict */
+    .feed-error {
+      background: color-mix(in srgb, var(--red) 7%, transparent);
+      border: 1px solid color-mix(in srgb, var(--red) 18%, transparent);
+    }
+    .feed-error .feed-icon { color: var(--red); }
+    .feed-error .feed-body { color: var(--red); }
+
+    /* Tool call row */
+    .feed-tool {
+      background: color-mix(in srgb, var(--cyan) 7%, transparent);
+      border: 1px solid color-mix(in srgb, var(--cyan) 18%, transparent);
+    }
+    .feed-tool .feed-icon { color: var(--cyan); }
+    .feed-tool .feed-body {
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .feed-tool-name {
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--cyan);
+      white-space: nowrap;
+    }
+    .feed-tool-args {
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 10px;
+      color: var(--fg-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 200px;
+    }
+
+    /* File chip inside a feed item */
+    .feed-file-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      background: color-mix(in srgb, var(--border) 60%, transparent);
+      border: 1px solid var(--border-subtle);
+      color: var(--fg-muted);
+      white-space: nowrap;
+    }
+
+    /* Worker streaming indicator */
+    .feed-stream {
+      background: transparent;
+    }
+    .feed-stream .feed-icon { color: var(--magenta); }
+    .feed-stream .feed-body { color: var(--dim); font-size: 10.5px; }
+
+    /* Debug (hidden by default) */
+    .feed-debug { display: none; }
+
+    /* Legacy compat — kept but rarely used now */
     .log-line     { white-space: pre-wrap; word-break: break-all; padding: 0.5px 0; }
     .log-thinking { color: var(--cyan); }
     .log-action   { color: var(--green); }
@@ -742,7 +852,7 @@
     <!-- Brand header -->
     <div id="header">
       <svg id="header-logo" viewBox="0 0 250 250" xmlns="http://www.w3.org/2000/svg" style="fill-rule:evenodd;clip-rule:evenodd;">
-        <path d="M123.232,80.717C147.789,80.717 167.726,100.654 167.726,125.21C167.726,149.767 147.789,169.704 123.232,169.704C98.675,169.704 78.738,149.767 78.738,125.21C78.738,100.654 98.675,80.717 123.232,80.717ZM123.232,106.546C112.931,106.546 104.568,114.909 104.568,125.21C104.568,135.512 112.931,143.875 123.232,143.875C133.534,143.875 141.897,135.512 141.897,125.21C141.897,114.909 133.534,106.546 123.232,106.546ZM148.804,9.454C156,7.12 163.737,11.067 166.07,18.263L180.727,63.45C183.061,70.646 179.114,78.383 171.919,80.717C164.723,83.05 156.986,79.103 154.652,71.908L139.996,26.72C137.662,19.525 141.609,11.788 148.804,9.454ZM20.999,65.195C20.998,57.63 27.138,51.487 34.702,51.486L82.207,51.475C89.772,51.473 95.915,57.613 95.917,65.178C95.918,72.742 89.778,78.885 82.214,78.887L34.709,78.898C27.144,78.899 21.001,72.759 20.999,65.195ZM34.62,203.959C27.424,201.629 23.473,193.894 25.804,186.697L40.44,141.503C42.771,134.306 50.506,130.356 57.702,132.686C64.899,135.017 68.849,142.752 66.519,149.949L51.883,195.143C49.552,202.339 41.817,206.29 34.62,203.959ZM170.825,233.785C166.389,239.912 157.813,241.286 151.685,236.85L113.205,208.992C107.078,204.557 105.704,195.98 110.14,189.853C114.576,183.726 123.152,182.352 129.28,186.788L167.76,214.645C173.887,219.081 175.26,227.657 170.825,233.785ZM241.191,113.412C245.652,119.521 244.314,128.102 238.205,132.564L199.841,160.58C193.732,165.042 185.151,163.704 180.689,157.595C176.228,151.486 177.566,142.904 183.675,138.443L222.039,110.426C228.148,105.965 236.73,107.303 241.191,113.412Z" fill="#FF2F00"/>
+        <path d="M123.232,82.146C99.473,82.146 80.184,101.436 80.184,125.195C80.184,148.954 99.473,168.243 123.232,168.243C146.991,168.243 166.28,148.954 166.28,125.195C166.28,101.436 146.991,82.146 123.232,82.146ZM123.232,109.822C131.717,109.822 138.605,116.71 138.605,125.195C138.605,133.679 131.717,140.567 123.232,140.567C114.748,140.567 107.859,133.679 107.859,125.195C107.859,116.71 114.748,109.822 123.232,109.822ZM168.787,226.734C173.502,220.221 172.043,211.104 165.529,206.389L129.935,180.621C123.422,175.906 114.305,177.365 109.59,183.879C104.874,190.393 106.334,199.509 112.848,204.225L148.442,229.992C154.955,234.708 164.072,233.248 168.787,226.734ZM146.303,16.322C138.654,18.803 134.458,27.027 136.939,34.676L150.496,76.474C152.977,84.123 161.201,88.319 168.85,85.838C176.499,83.357 180.695,75.133 178.214,67.484L164.657,25.686C162.176,18.037 153.951,13.841 146.303,16.322ZM233.871,113.165C229.128,106.671 220.006,105.249 213.512,109.992L178.025,135.907C171.531,140.649 170.109,149.772 174.852,156.266C179.594,162.76 188.717,164.182 195.211,159.439L230.697,133.524C237.191,128.782 238.613,119.659 233.871,113.165ZM26.776,69.681C26.778,77.722 33.308,84.249 41.349,84.248L85.291,84.238C93.332,84.236 99.859,77.706 99.857,69.665C99.856,61.623 93.326,55.096 85.284,55.098L41.342,55.108C33.301,55.11 26.774,61.64 26.776,69.681ZM40.684,199.836C48.334,202.314 56.557,198.114 59.034,190.464L72.573,148.66C75.05,141.01 70.851,132.788 63.201,130.31C55.55,127.833 47.328,132.032 44.851,139.682L31.312,181.486C28.835,189.137 33.034,197.359 40.684,199.836Z" fill="#FF2F00"/>
       </svg>
       <span id="header-title">Turbine</span>
     </div>
@@ -751,7 +861,7 @@
     <div id="history">
       <div id="empty-state">
         <svg id="empty-logo" viewBox="0 0 250 250" xmlns="http://www.w3.org/2000/svg" style="fill-rule:evenodd;clip-rule:evenodd;">
-          <path d="M125,0C193.989,0 250,56.011 250,125C250,193.989 193.989,250 125,250C56.011,250 0,193.989 0,125C0,56.011 56.011,0 125,0ZM123.232,82.146C99.473,82.146 80.184,101.436 80.184,125.195C80.184,148.954 99.473,168.243 123.232,168.243C146.991,168.243 166.28,148.954 166.28,125.195C166.28,101.436 146.991,82.146 123.232,82.146ZM123.232,109.822C131.717,109.822 138.605,116.71 138.605,125.195C138.605,133.679 131.717,140.567 123.232,140.567C114.748,140.567 107.859,133.679 107.859,125.195C107.859,116.71 114.748,109.822 123.232,109.822ZM168.787,226.734C173.502,220.221 172.043,211.104 165.529,206.389L129.935,180.621C123.422,175.906 114.305,177.365 109.59,183.879C104.874,190.393 106.334,199.509 112.848,204.225L148.442,229.992C154.955,234.708 164.072,233.248 168.787,226.734ZM146.303,16.322C138.654,18.803 134.458,27.027 136.939,34.676L150.496,76.474C152.977,84.123 161.201,88.319 168.85,85.838C176.499,83.357 180.695,75.133 178.214,67.484L164.657,25.686C162.176,18.037 153.951,13.841 146.303,16.322ZM233.871,113.165C229.128,106.671 220.006,105.249 213.512,109.992L178.025,135.907C171.531,140.649 170.109,149.772 174.852,156.266C179.594,162.76 188.717,164.182 195.211,159.439L230.697,133.524C237.191,128.782 238.613,119.659 233.871,113.165ZM26.776,69.681C26.778,77.722 33.308,84.249 41.349,84.248L85.291,84.238C93.332,84.236 99.859,77.706 99.857,69.665C99.856,61.623 93.326,55.096 85.284,55.098L41.342,55.108C33.301,55.11 26.774,61.64 26.776,69.681ZM40.684,199.836C48.334,202.314 56.557,198.114 59.034,190.464L72.573,148.66C75.05,141.01 70.851,132.788 63.201,130.31C55.55,127.833 47.328,132.032 44.851,139.682L31.312,181.486C28.835,189.137 33.034,197.359 40.684,199.836Z" fill="currentColor"/>
+          <path d="M123.232,82.146C99.473,82.146 80.184,101.436 80.184,125.195C80.184,148.954 99.473,168.243 123.232,168.243C146.991,168.243 166.28,148.954 166.28,125.195C166.28,101.436 146.991,82.146 123.232,82.146ZM123.232,109.822C131.717,109.822 138.605,116.71 138.605,125.195C138.605,133.679 131.717,140.567 123.232,140.567C114.748,140.567 107.859,133.679 107.859,125.195C107.859,116.71 114.748,109.822 123.232,109.822ZM168.787,226.734C173.502,220.221 172.043,211.104 165.529,206.389L129.935,180.621C123.422,175.906 114.305,177.365 109.59,183.879C104.874,190.393 106.334,199.509 112.848,204.225L148.442,229.992C154.955,234.708 164.072,233.248 168.787,226.734ZM146.303,16.322C138.654,18.803 134.458,27.027 136.939,34.676L150.496,76.474C152.977,84.123 161.201,88.319 168.85,85.838C176.499,83.357 180.695,75.133 178.214,67.484L164.657,25.686C162.176,18.037 153.951,13.841 146.303,16.322ZM233.871,113.165C229.128,106.671 220.006,105.249 213.512,109.992L178.025,135.907C171.531,140.649 170.109,149.772 174.852,156.266C179.594,162.76 188.717,164.182 195.211,159.439L230.697,133.524C237.191,128.782 238.613,119.659 233.871,113.165ZM26.776,69.681C26.778,77.722 33.308,84.249 41.349,84.248L85.291,84.238C93.332,84.236 99.859,77.706 99.857,69.665C99.856,61.623 93.326,55.096 85.284,55.098L41.342,55.108C33.301,55.11 26.774,61.64 26.776,69.681ZM40.684,199.836C48.334,202.314 56.557,198.114 59.034,190.464L72.573,148.66C75.05,141.01 70.851,132.788 63.201,130.31C55.55,127.833 47.328,132.032 44.851,139.682L31.312,181.486C28.835,189.137 33.034,197.359 40.684,199.836Z" fill="currentColor"/>
         </svg>
         <h2>Turbine</h2>
         <p>Describe a change to your codebase and press Enter</p>
@@ -1270,25 +1380,121 @@
       });
     }
 
-    // ── Logging ───────────────────────────────────────────────
-    function _addLogLine(step, cls, text, updateSummary) {
-      const line = document.createElement("div");
-      line.className = `log-line ${cls}`;
-      line.textContent = text;
-      step.logsEl.appendChild(line);
+    // ── Activity feed helpers ─────────────────────────────────
+    // Tool-call icon map
+    const TOOL_ICONS = {
+      read_file:       "📄",
+      search:          "🔍",
+      write_file:      "✏️",
+      run_tests:       "🧪",
+      list_dir:        "📂",
+      grep:            "🔎",
+      done:            "✅",
+      patch:           "🔧",
+    };
+    function toolIcon(name) {
+      return TOOL_ICONS[name] || "⚙";
+    }
 
+    // Detect if a text snippet looks like a file path
+    function _looksLikeFile(text) {
+      return /\b[\w/\\.-]+\.(py|ts|js|tsx|jsx|json|md|txt|html|css|yaml|yml|toml|sh|rs|go|java|c|cpp|h|hpp)\b/.test(text);
+    }
+
+    // Extract the first file-like token from text
+    function _extractFile(text) {
+      const m = text.match(/([\w/\\.-]+\.(py|ts|js|tsx|jsx|json|md|txt|html|css|yaml|yml|toml|sh|rs|go|java|c|cpp|h|hpp))/);
+      return m ? m[1] : null;
+    }
+
+    // Build a feed <div> element of the given variant
+    function _makeFeedItem(variant, iconText, bodyHtml) {
+      const item = document.createElement("div");
+      item.className = `feed-item feed-${variant}`;
+      const icon = document.createElement("span");
+      icon.className = "feed-icon";
+      icon.textContent = iconText;
+      item.appendChild(icon);
+      const body = document.createElement("div");
+      body.className = "feed-body";
+      body.innerHTML = bodyHtml;
+      item.appendChild(body);
+      return item;
+    }
+
+    // Append a structured feed item to a step
+    function _addFeedItem(step, item, updateSummary, summaryText) {
+      step.logsEl.appendChild(item);
       step.logCount++;
-      step.countEl.textContent = step.logCount === 1 ? "1 line" : `${step.logCount} lines`;
+      step.countEl.textContent = step.logCount === 1 ? "1 item" : `${step.logCount} items`;
       step.countEl.style.display = "";
-
       if (step.bodyEl.style.display !== "none") {
         step.logsEl.scrollTop = step.logsEl.scrollHeight;
       }
-
-      if (updateSummary && cls === "log-action") {
-        const clean = text.replace(/^\S+\s+/, "").slice(0, 60);
+      if (updateSummary && summaryText) {
+        const clean = summaryText.slice(0, 60);
         step.liveEl.textContent = clean + (clean.length >= 60 ? "…" : "");
       }
+    }
+
+    // Smart log-line renderer: pick the right feed variant based on level + content
+    function _addLogLine(step, cls, text, updateSummary) {
+      let item;
+
+      if (cls === "log-thinking") {
+        // Strip leading "[thinking]" prefix if present
+        const cleaned = text.replace(/^\[?thinking\]?\s*/i, "").replace(/^DeepAgent \[[\w-]+\]:\s*/, "");
+        item = _makeFeedItem("thinking", "·", esc(cleaned));
+        _addFeedItem(step, item, false, "");
+
+      } else if (cls === "log-action") {
+        // Check if it contains a file reference → render with file chip
+        const file = _extractFile(text);
+        const cleaned = text.replace(/^\[?action\]?\s*/i, "");
+        if (file) {
+          const beforeFile = esc(cleaned.slice(0, cleaned.indexOf(file)));
+          const afterFile  = esc(cleaned.slice(cleaned.indexOf(file) + file.length));
+          const bodyHtml = beforeFile
+            + `<span class="feed-file-chip">📄 ${esc(file)}</span>`
+            + afterFile;
+          item = _makeFeedItem("action", "✓", bodyHtml);
+        } else {
+          item = _makeFeedItem("action", "✓", esc(cleaned));
+        }
+        _addFeedItem(step, item, updateSummary, cleaned);
+
+      } else if (cls === "log-error") {
+        const cleaned = text.replace(/^\[?error\]?\s*/i, "");
+        item = _makeFeedItem("error", "✗", esc(cleaned));
+        _addFeedItem(step, item, false, "");
+
+      } else if (cls === "log-done") {
+        item = _makeFeedItem("action", "✓", `<strong>${esc(text)}</strong>`);
+        _addFeedItem(step, item, updateSummary, text);
+
+      } else {
+        // log-debug: hidden
+        return;
+      }
+
+      historyEl.scrollTop = historyEl.scrollHeight;
+    }
+
+    // Append a tool-call feed item (from deep_iteration or parsed tool log)
+    function appendToolCall(toolName, toolArgs) {
+      if (!activeRun) { return; }
+      const stepName = activeRun.currentStepName;
+      if (!stepName) { return; }
+      const step = activeRun.stepCards[stepName];
+      if (!step) { return; }
+
+      const icon = toolIcon(toolName);
+      const argsStr = toolArgs && toolArgs.length < 60 ? toolArgs : (toolArgs ? toolArgs.slice(0, 58) + "…" : "");
+      const bodyHtml = `<span class="feed-tool-name">${esc(toolName)}</span>`
+                     + (argsStr ? `<span class="feed-tool-args">${esc(argsStr)}</span>` : "");
+      const item = _makeFeedItem("tool", icon, bodyHtml);
+      _addFeedItem(step, item, true, toolName);
+      historyEl.scrollTop = historyEl.scrollHeight;
     }
 
     function appendLog(cls, text) {
@@ -1300,8 +1506,15 @@
       }
       const step = activeRun.stepCards[stepName];
       if (!step) { return; }
+
+      // Check if this is a "tool: name(args)" log from deep_agent and render as tool call
+      const toolMatch = text.match(/DeepAgent \[[\w-]+\] tool: (\w+)\(([^)]*)\)/);
+      if (toolMatch) {
+        appendToolCall(toolMatch[1], toolMatch[2]);
+        return;
+      }
+
       _addLogLine(step, cls, text, true);
-      historyEl.scrollTop = historyEl.scrollHeight;
     }
 
     // ── Clarification widget (Phase 19) ──────────────────────
@@ -1472,11 +1685,16 @@
           activeRun.workers[ev.ticket_id] = {
             description: ev.description, status: "running",
             attempt: 0, startTs: Date.now(), elapsed: 0, detail: "",
-            files: []  // Phase 18: filled in on worker_done
+            files: [], charCount: 0
           };
           const step = ensureWorkersSection();
           if (step?.workerTbody) { renderWorkers(activeRun.workers, step.workerTbody); }
-          appendLog("log-thinking", `${ev.ticket_id}  ${ev.description}`);
+          // Show a "started" feed item
+          const startItem = _makeFeedItem("thinking", "◌",
+            `<strong style="color:var(--cyan);font-style:normal">${esc(ev.ticket_id)}</strong>`
+            + ` — ${esc(ev.description.length > 70 ? ev.description.slice(0,70)+"…" : ev.description)}`);
+          const sStep = activeRun.stepCards[activeRun.currentStepName];
+          if (sStep) { _addFeedItem(sStep, startItem, true, ev.description); }
           break;
         }
 
@@ -1504,16 +1722,27 @@
             w.status  = ev.success ? "approved" : "failed";
             w.elapsed = (Date.now() - w.startTs) / 1000;
             w.detail  = ev.detail || "";
-            w.files   = ev.files || [];  // Phase 18: store modified file list
+            w.files   = ev.files || [];
+            // Remove any streaming indicator
+            if (w._streamEl) { w._streamEl.remove(); w._streamEl = null; }
             const ws = activeRun.workerStepName && activeRun.stepCards[activeRun.workerStepName];
             if (ws?.workerTbody) { renderWorkers(activeRun.workers, ws.workerTbody); }
           }
           const fileHint = (ev.files && ev.files.length > 0)
-            ? ` (${ev.files.length} file${ev.files.length !== 1 ? "s" : ""})` : "";
-          appendLog(
-            ev.success ? "log-action" : "log-error",
-            `${ev.ticket_id} ${ev.success ? "✓ approved" : "✗ failed"}${ev.detail ? " — " + ev.detail : ""}${fileHint}`
-          );
+            ? ` — ${ev.files.length} file${ev.files.length !== 1 ? "s" : ""} written` : "";
+          const doneStep = activeRun?.currentStepName && activeRun.stepCards[activeRun.currentStepName];
+          if (doneStep) {
+            const doneItem = _makeFeedItem(
+              ev.success ? "action" : "error",
+              ev.success ? "✓" : "✗",
+              `<strong>${esc(ev.ticket_id)}</strong> ${ev.success ? "complete" : "failed"}`
+                + (ev.detail ? ` — ${esc(ev.detail.slice(0, 60))}` : "")
+                + (ev.files && ev.files.length > 0
+                  ? ` <span class="feed-file-chip">📄 ${esc(String(ev.files.length))} file${ev.files.length !== 1 ? "s" : ""}</span>` : "")
+            );
+            _addFeedItem(doneStep, doneItem, true,
+              `${ev.ticket_id} ${ev.success ? "complete" : "failed"}${fileHint}`);
+          }
           break;
         }
 
@@ -1522,7 +1751,42 @@
           activeRun.workers[ev.ticket_id].status = "repair";
           const ws = activeRun.workerStepName && activeRun.stepCards[activeRun.workerStepName];
           if (ws?.workerTbody) { renderWorkers(activeRun.workers, ws.workerTbody); }
-          appendLog("log-error", `${ev.ticket_id} ↺ repair needed`);
+        case "worker_token": {
+          // Live streaming indicator — update/create a stream item on the active step
+          if (!activeRun) { break; }
+          const w = activeRun.workers[ev.ticket_id];
+          if (w) { w.charCount = ev.char_count || 0; }
+          const streamStep = activeRun.currentStepName && activeRun.stepCards[activeRun.currentStepName];
+          if (streamStep) {
+            // Create or update the per-worker streaming element
+            const elemId = `stream-${ev.ticket_id}`;
+            let streamEl = streamStep.logsEl.querySelector(`[data-stream="${elemId}"]`);
+            if (!streamEl) {
+              streamEl = _makeFeedItem("stream", "~",
+                `<span data-label>${esc(ev.ticket_id)}</span> generating…`);
+              streamEl.dataset.stream = elemId;
+              streamStep.logsEl.appendChild(streamEl);
+              if (w) { w._streamEl = streamEl; }
+            }
+            const label = streamEl.querySelector("[data-label]");
+            if (label) {
+              label.textContent = `${ev.ticket_id} `;
+            }
+            const chars = ev.char_count || 0;
+            const suffix = streamEl.querySelector(".feed-body");
+            if (suffix) {
+              suffix.innerHTML = `<span data-label>${esc(ev.ticket_id)}</span>`
+                + ` <span style="color:var(--magenta);font-size:10px">${chars.toLocaleString()} chars…</span>`;
+            }
+            streamStep.logsEl.scrollTop = streamStep.logsEl.scrollHeight;
+          }
+          break;
+        }
+
+        case "deep_iteration": {
+          // When a tool name is present, render it as a tool call
+          if (!activeRun || !ev.last_tool) { break; }
+          appendToolCall(String(ev.last_tool), "");
           break;
         }
 

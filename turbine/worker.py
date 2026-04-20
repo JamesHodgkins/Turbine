@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import json
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -36,6 +37,7 @@ from turbine.manager import Ticket, WorkerResult
 from turbine.scoped_edit import (
     LARGE_FILE_THRESHOLD,
     ScopedEditApplicator,
+    build_file_outline,
     check_definition_integrity,
     parse_scoped_edits,
 )
@@ -125,6 +127,26 @@ file you were given at the start.  Write your complete new file(s) using the sam
 """
 
 # Phase 12: targeted repair prompt — used on repair round 1 (constraint-only).
+SCOPED_EDIT_FAILURE_TEMPLATE = """\
+Your previous scoped edit(s) could not be applied to the following file(s):
+
+{failures}
+
+Common fixes:
+  - "search" text not found: copy the exact lines from the file content below,
+    including all indentation.  Include 2–4 lines of unchanged context above
+    and below the changed section to make the match unique.
+  - "function not found": verify the bare name matches exactly (case-sensitive,
+    no signature, decorators, or punctuation — just the plain identifier).
+  - JSON parse error: ensure the block is valid JSON with no trailing commas or
+    unquoted keys.
+
+Please resubmit your scoped edits.  The current file content(s) are shown below.
+
+{current_files}
+"""
+
+# Phase 12: targeted repair prompt — used on repair round 1 (constraint-only).
 # The worker is asked only to fix the specific test failures, not to re-generate
 # the entire file from scratch.  This is cheaper and less likely to regress
 # unrelated code.
@@ -146,6 +168,40 @@ The current file contents are shown below for reference.
 """
 
 # ---------------------------------------------------------------------------
+# Phase 22.2: Pre-write reflection prompt
+# ---------------------------------------------------------------------------
+
+REFLECTION_SYSTEM = """\
+You are performing a brief sanity check on a worker's proposed implementation \
+before it is written to disk.  You will be shown the worker's task, plan, and \
+a summary of the files it intends to change.
+
+Decide whether the approach is sound, or whether there is a single blocking \
+assumption that would make the changes incorrect or incomplete.
+
+A "blocking assumption" is one where:
+  - The worker assumes a function, type, or constant exists in a dependency but it may not.
+  - The plan requires runtime information the worker could not have had access to.
+  - The worker is about to overwrite something in a way that is clearly contradicted
+    by the plan or the task description.
+
+Return ONLY a JSON object:
+{
+  "proceed": true,
+  "blocking_assumption": ""
+}
+
+Rules:
+  - Set "proceed" to true in the VAST MAJORITY of cases.  Only block when you are
+    confident there is a concrete, specific problem — not vague uncertainty.
+  - "blocking_assumption" must be a single, specific sentence.  Non-empty only when
+    proceed == false.
+  - Do NOT block for stylistic disagreements, minor unknowns, or reasonable judgment calls.
+  - Do NOT block just because the plan is complex or touches many files.
+Return nothing but the JSON object — no prose, no markdown fences."""
+
+
+# ---------------------------------------------------------------------------
 # Scoped-edit mode (Phase 9) — used for large files
 # ---------------------------------------------------------------------------
 
@@ -156,13 +212,26 @@ _SCOPED_EDIT_INSTRUCTIONS = """\
 For every file marked [LARGE FILE — use scoped edits] below, do NOT return
 the complete file content.  Instead return a JSON array of targeted edits
 inside a <scoped_edits path="relative/path/to/file.py"> … </scoped_edits>
-block.  Each edit is a JSON object with ONE of these two forms:
+block.  Each edit is a JSON object with ONE of these three forms:
 
-  Function/class scope:
+  **PREFERRED — Search/replace (use this for most changes):**
+    { "search": "<exact lines to find>", "replacement": "<new text>" }
+
+  Function/class scope (use when replacing an entire definition):
     { "function": "myMethodName", "replacement": "<complete new definition>" }
 
-  Line range:
+  Line range (use when you are certain of the exact line numbers):
     { "lines": [<start_1based>, <end_1based>], "replacement": "<new text>" }
+
+IMPORTANT — "search" value rules (PREFERRED form):
+  - "search" must be the EXACT text as it appears in the file, including all
+    indentation and surrounding lines.  Include 2–4 lines of unchanged context
+    above and below the part you are changing to make the match unique.
+  - The search text must appear exactly ONCE in the file.  If a snippet repeats,
+    add more context lines until it is unique.
+  - "replacement" is the complete new text that will replace the matched region.
+    Include the unchanged context lines you added to "search" verbatim.
+  - This form never requires counting line numbers — always prefer it.
 
 IMPORTANT — "function" value rules:
   - "function" must be the BARE identifier name only (e.g. "toString", "add",
@@ -172,8 +241,8 @@ IMPORTANT — "function" value rules:
     its signature/header line, body, and closing brace (for JS) or all indented
     lines (for Python). Include everything from the first line of the definition
     to the last.
-  - To add a NEW function that does not yet exist, use the "lines" form and
-    insert at the appropriate line number.
+  - To add a NEW function that does not yet exist, use the "search" form to
+    insert after a unique anchor line, or the "lines" form with the target line.
   - To delete a definition, use an empty "replacement": "".
   - Edits must not overlap each other.
   - Keep all existing functions/classes you are not changing — omit them from
@@ -344,6 +413,68 @@ class Worker:
         return snap is not None and len(snap) >= LARGE_FILE_THRESHOLD
 
     # ------------------------------------------------------------------
+    # Phase 22.2: Pre-write reflection
+    # ------------------------------------------------------------------
+
+    async def _run_reflection(self, file_blocks: dict[str, str]) -> tuple[bool, str]:
+        """Lightweight sanity-check called before the first VFS write.
+
+        Asks the LLM whether the proposed file changes make sense given the
+        ticket plan.  Returns ``(proceed, blocking_assumption)``.  On any
+        API or parse error it returns ``(True, "")`` so the pipeline is
+        never blocked by a reflection failure.
+        """
+        change_summary = "\n".join(
+            f"  - {path} ({len(content.splitlines())} lines)"
+            for path, content in file_blocks.items()
+        )
+        user_content = (
+            f"Task description: {self.ticket.description}\n\n"
+            f"Step-by-step plan:\n{self.ticket.context or '(none)'}\n\n"
+            f"Proposed changes (files to be written):\n{change_summary}"
+        )
+
+        try:
+            response = await self.client.chat.complete_async(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": REFLECTION_SYSTEM},
+                    {"role": "user", "content": user_content},
+                ],
+            )
+            raw: str = response.choices[0].message.content or ""
+            usage = getattr(response, "usage", None)
+            if usage is not None and self.cost_tracker is not None:
+                self.cost_tracker.record(
+                    input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                    output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                )
+        except Exception as exc:
+            self.log.error(
+                f"Worker [{self.ticket.id}] — reflection API error: {exc}; skipping."
+            )
+            return True, ""
+
+        # Strip markdown fences the LLM may have added
+        raw = raw.strip()
+        if raw.startswith("```"):
+            lines = raw.splitlines()
+            raw = "\n".join(lines[1:])
+            if raw.rstrip().endswith("```"):
+                raw = raw.rstrip()[:-3]
+
+        try:
+            result = json.loads(raw.strip())
+            proceed = bool(result.get("proceed", True))
+            blocking = str(result.get("blocking_assumption", "")).strip()
+            return proceed, blocking
+        except (json.JSONDecodeError, ValueError) as exc:
+            self.log.error(
+                f"Worker [{self.ticket.id}] — reflection parse error: {exc}; skipping."
+            )
+            return True, ""
+
+    # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
 
@@ -454,8 +585,9 @@ class Worker:
             file_blocks = _extract_file_blocks(assistant_text)
 
             # Resolve scoped edits → complete file content (with fallback)
+            scoped_failures: dict[str, str] = {}  # rel → error description
             for rel, raw_json in scoped_blocks.items():
-                resolved = self._apply_scoped_edits(rel, raw_json, conflict_retry)
+                resolved, error = self._apply_scoped_edits(rel, raw_json, conflict_retry)
                 if resolved is not None:
                     # Scoped edit applied — treat like a complete file block
                     file_blocks[rel] = resolved
@@ -464,8 +596,32 @@ class Worker:
                         f"Worker [{self.ticket.id}] — scoped edit for '{rel}' "
                         "failed; falling back to complete-content mode."
                     )
-                    # Fallback: the LLM must supply a full file block.
-                    # If it didn't, we have nothing for this file — skip.
+                    scoped_failures[rel] = error
+
+            # If any scoped edits failed and the LLM supplied no full-file
+            # fallback, send targeted feedback and retry rather than silently
+            # dropping the file.
+            failed_without_fallback = {
+                rel: err for rel, err in scoped_failures.items()
+                if rel not in file_blocks
+            }
+            if failed_without_fallback:
+                failure_text = "\n".join(
+                    f"  {rel}: {err}" for rel, err in failed_without_fallback.items()
+                )
+                self.log.thinking(
+                    f"Worker [{self.ticket.id}] — scoped edit failure(s), "
+                    "requesting corrected edits."
+                )
+                current_files = self._build_file_contents()
+                messages.append({
+                    "role": "user",
+                    "content": SCOPED_EDIT_FAILURE_TEMPLATE.format(
+                        failures=failure_text,
+                        current_files=current_files,
+                    ),
+                })
+                continue  # next handshake attempt
 
             if not file_blocks:
                 self.log.action(f"Worker [{self.ticket.id}] — no file blocks produced (no changes).")
@@ -474,6 +630,32 @@ class Worker:
                 return WorkerResult(
                     ticket_id=self.ticket.id, success=True, proposed_diff="",
                     uncertain=is_uncertain,
+                )
+
+            # -------------------------------------------------------
+            # Phase 22.2: pre-write reflection (first attempt only,
+            # skipped on repair rounds and when ticket opts out).
+            # -------------------------------------------------------
+            if attempt == 1 and not repair_feedback and not self.ticket.reflection_skipped:
+                self.log.thinking(
+                    f"Worker [{self.ticket.id}] — running pre-write reflection…"
+                )
+                proceed, blocking = await self._run_reflection(file_blocks)
+                if not proceed:
+                    self.log.thinking(
+                        f"Worker [{self.ticket.id}] — reflection blocked: {blocking}"
+                    )
+                    if self.ui:
+                        self.ui.on_worker_blocked(self.ticket.id, assumption=blocking)
+                    if self.json_ui is not None:
+                        self.json_ui.on_worker_blocked(self.ticket.id, assumption=blocking)
+                    return WorkerResult(
+                        ticket_id=self.ticket.id,
+                        success=False,
+                        error=f"reflection blocked: {blocking}",
+                    )
+                self.log.thinking(
+                    f"Worker [{self.ticket.id}] — reflection passed; proceeding to write."
                 )
 
             if self.verbose:
@@ -671,32 +853,30 @@ class Worker:
 
     def _apply_scoped_edits(
         self, rel: str, raw_json: str, use_snapshot: bool
-    ) -> str | None:
+    ) -> tuple[str | None, str]:
         """Parse *raw_json* as a scoped-edit list, apply to the VFS snapshot,
-        and return the resulting complete file content as a string.
-
-        Returns ``None`` on any parse or application error (caller falls back
-        to complete-content mode).
+        and return ``(complete_file_content, "")`` on success or
+        ``(None, error_message)`` on any parse or application error.
         """
         import json as _json
 
         try:
             data = _json.loads(raw_json)
         except _json.JSONDecodeError as exc:
+            msg = f"JSON parse error: {exc}"
             self.log.error(
-                f"Worker [{self.ticket.id}] — scoped edit JSON parse error "
-                f"for '{rel}': {exc}"
+                f"Worker [{self.ticket.id}] — scoped edit {msg} for '{rel}'"
             )
-            return None
+            return None, msg
 
         try:
             edits = parse_scoped_edits(data)
         except ValueError as exc:
+            msg = f"schema error: {exc}"
             self.log.error(
-                f"Worker [{self.ticket.id}] — scoped edit schema error "
-                f"for '{rel}': {exc}"
+                f"Worker [{self.ticket.id}] — scoped edit {msg} for '{rel}'"
             )
-            return None
+            return None, msg
 
         ref = (
             self.vfs.get_snapshot(rel) if use_snapshot else self.vfs.get_baseline(rel)
@@ -707,11 +887,11 @@ class Worker:
                 self.vfs.get_snapshot(norm) if use_snapshot else self.vfs.get_baseline(norm)
             )
         if ref is None:
+            msg = f"no VFS reference found for '{rel}'"
             self.log.error(
-                f"Worker [{self.ticket.id}] — no VFS reference for "
-                f"'{rel}' during scoped edit application."
+                f"Worker [{self.ticket.id}] — scoped edit: {msg}"
             )
-            return None
+            return None, msg
 
         result = ScopedEditApplicator(ref).apply(edits)
         if not result.success:
@@ -719,9 +899,9 @@ class Worker:
                 f"Worker [{self.ticket.id}] — scoped edit application "
                 f"failed for '{rel}': {result.error}"
             )
-            return None
+            return None, result.error
 
-        return "\n".join(result.lines)
+        return "\n".join(result.lines), ""
 
     def _check_integrity(
         self, file_blocks: dict[str, str], use_snapshot: bool
@@ -778,14 +958,17 @@ class Worker:
             content = "\n".join(snapshot)
             if rel in self._large_files:
                 # Show with line numbers so the LLM can reference them
-                # precisely when producing line-range scoped edits.
+                # precisely when producing scoped edits.  Prepend a structural
+                # outline so the LLM can navigate without manually counting lines.
                 n = len(snapshot)
                 width = len(str(n))
                 numbered = "\n".join(
                     f"{i + 1:>{width}} | {line}" for i, line in enumerate(snapshot)
                 )
+                outline = build_file_outline(snapshot)
+                outline_section = f"\n{outline}\n\n" if outline else "\n"
                 label = f"### {rel} [LARGE FILE — use scoped edits] ({n} lines)"
-                parts.append(f"{label}\n```\n{numbered}\n```")
+                parts.append(f"{label}{outline_section}```\n{numbered}\n```")
             else:
                 label = f"### {rel}"
                 parts.append(f"{label}\n```\n{content}\n```")
